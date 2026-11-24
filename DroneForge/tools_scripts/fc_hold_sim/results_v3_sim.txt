@@ -1,0 +1,32 @@
+FC height hold, REAL v3 firmware code in a simulated drone
+
+1  Floor take-off to 0.5 m, hold, land (ground effect, normal delays)
+    outcome: landed   target 0.5 m, highest 0.59 m (overshoot 0.09 m), hold error max 0.03 / rms 0.022 m, max vertical speed 0.86 m/s, touchdown 0.87 m/s, reached target after 29.5 s, total 49.2 s
+    phases: 29.7s HOLD, 41.7s LAND
+2  On boxes (no ground effect, hover 0.79)
+    outcome: landed   target 0.5 m, highest 0.61 m (overshoot 0.11 m), hold error max 0.01 / rms 0.004 m, max vertical speed 0.66 m/s, touchdown 0.67 m/s, reached target after 37.2 s, total 56.0 s
+    phases: 37.3s HOLD, 49.3s LAND
+3  Like your real drone: ground effect 35%, speed bias, delays, target 0.5 m
+    outcome: landed   target 0.5 m, highest 0.57 m (overshoot 0.07 m), hold error max 0.3 / rms 0.237 m, max vertical speed 0.92 m/s, touchdown 0.79 m/s, reached target after 26.2 s, total 50.7 s
+    phases: 26.4s HOLD, 38.4s LAND
+4  Like your real drone, target 0.3 m
+    outcome: landed   target 0.3 m, highest 0.33 m (overshoot 0.03 m), hold error max 0.14 / rms 0.137 m, max vertical speed 1.16 m/s, touchdown 1.05 m/s, reached target after 25.4 s, total 46.0 s
+    phases: 25.6s HOLD, 37.6s LAND
+5  Hover reference far too low (0.60 vs real hover 0.78)
+    outcome: landed   target 0.5 m, highest 0.61 m (overshoot 0.11 m), hold error max 0.01 / rms 0.003 m, max vertical speed 0.8 m/s, touchdown 0.81 m/s, reached target after 40.0 s, total 60.6 s
+    phases: 40.2s HOLD, 52.2s LAND
+6  Height steps 0.5 -> 0.9 -> 0.4 m
+    outcome: landed   target 0.5 m, highest 1.02 m (overshoot 0.12 m), hold error max 0.52 / rms 0.201 m, max vertical speed 0.92 m/s, touchdown 0.93 m/s, reached target after 29.5 s, total 61.8 s
+    phases: 29.7s HOLD, 55.7s LAND
+7  Something holds the drone down near the floor (snagging tether)
+    outcome: landed   target 0.5 m, highest 0.73 m (overshoot 0.23 m), hold error max 0.19 / rms 0.103 m, max vertical speed 1.03 m/s, touchdown 1.05 m/s, reached target after 28.8 s, total 45.4 s
+    phases: 29.0s HOLD, 41.0s LAND
+8  Battery fades in flight -> thrust limit -> gentle landing
+    outcome: landed   target 0.5 m, highest 0.57 m (overshoot 0.07 m), hold error max 0.5 / rms 0.086 m, max vertical speed 0.92 m/s, touchdown 0.93 m/s, reached target after 31.6 s, total 89.9 s
+    phases: 31.7s HOLD, 86.1s LAND
+9  Slow sensor and command path (0.15 s + 0.15 s)
+    outcome: landed   target 0.5 m, highest 0.69 m (overshoot 0.19 m), hold error max 0.02 / rms 0.008 m, max vertical speed 1.32 m/s, touchdown 1.33 m/s, reached target after 27.7 s, total 43.6 s
+    phases: 27.8s HOLD, 39.9s LAND
+10 Noisy speed reading (sigma 0.12 m/s)
+    outcome: landed   target 0.5 m, highest 0.59 m (overshoot 0.09 m), hold error max 0.02 / rms 0.016 m, max vertical speed 0.88 m/s, touchdown 0.89 m/s, reached target after 29.5 s, total 49.2 s
+    phases: 29.7s HOLD, 41.7s LAND

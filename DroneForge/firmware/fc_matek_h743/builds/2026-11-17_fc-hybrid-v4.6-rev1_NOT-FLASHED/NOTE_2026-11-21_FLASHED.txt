@@ -1,0 +1,1 @@
+2026-11-21 (owner): THIS build (v4.6-rev1) IS FLASHED on the drone, not yet flown. The folder name says NOT-FLASHED only because it was not renamed; the last FLOWN build is v4.6 (2026-11-16_fc-hybrid-v4.5_FLASHED folder = old v4.6 / v4.5 rev3). Next candidate: 2026-11-23_fc-hybrid-v4.7-ST_FLASHED.

@@ -1,0 +1,12 @@
+{
+ "samples": 408,
+ "mean_ms": 174.34558823529412,
+ "median_ms": 171.0,
+ "p95_ms": 199.5999999999999,
+ "std_ms": 19.02141930301307,
+ "min_ms": 153.0,
+ "max_ms": 287.0,
+ "url": "rtsp://192.168.50.1:554/video",
+ "measured": "2026-11-20 16:41:37",
+ "note": "includes camera exposure and this screen's refresh (a few tens of ms)"
+}

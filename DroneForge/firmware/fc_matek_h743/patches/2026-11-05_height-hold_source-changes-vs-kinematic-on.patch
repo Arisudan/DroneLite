@@ -1,0 +1,387 @@
+diff --git a/mk/source.mk b/mk/source.mk
+index 031e692..fb04009 100644
+--- a/mk/source.mk
++++ b/mk/source.mk
+@@ -93,6 +93,8 @@ COMMON_SRC = \
+             ekf/kinematic.c \
+             ekf/kinematic_filter.c \
+             flight/kinematic_estimator.c \
++            flight/height_hold.c \
++            flight/height_hold_core.c \
+             flight/imu.c \
+             flight/mixer.c \
+             flight/mixer_init.c \
+diff --git a/src/main/build/debug.c b/src/main/build/debug.c
+index 30bd2d7..646a91d 100644
+--- a/src/main/build/debug.c
++++ b/src/main/build/debug.c
+@@ -117,4 +117,5 @@ const char * const debugModeNames[DEBUG_COUNT] = {
+     "MAG_CALIB",
+     "MAG_TASK_RATE",
+     "EZLANDING",
++    "OPTICALFLOW",
+ };
+diff --git a/src/main/cli/cli.c b/src/main/cli/cli.c
+index fbf1a84..965f605 100644
+--- a/src/main/cli/cli.c
++++ b/src/main/cli/cli.c
+@@ -4803,8 +4803,11 @@ static void cliStatus(const char *cmdName, char *cmdline)
+         }
+         const uint32_t mask = (1 << i);
+         if ((detectedSensorsMask & mask) && (mask & SENSOR_NAMES_MASK)) {
+-            const uint8_t sensorHardwareIndex = detectedSensors[i];
+-            const char *sensorHardware = sensorHardwareNames[i][sensorHardwareIndex];
++            // The sensor mask bit (i) is not the same as the sensor table index for
++            // OPTICALFLOW (bit 7, index SENSOR_INDEX_OPTICALFLOW); using i read past the tables.
++            const uint32_t sensorTableIndex = (mask == SENSOR_OPTICALFLOW) ? SENSOR_INDEX_OPTICALFLOW : i;
++            const uint8_t sensorHardwareIndex = detectedSensors[sensorTableIndex];
++            const char *sensorHardware = sensorHardwareNames[sensorTableIndex][sensorHardwareIndex];
+             if (i) {
+                 cliPrint(", ");
+             }
+diff --git a/src/main/drivers/optrange/optrange_mtf.c b/src/main/drivers/optrange/optrange_mtf.c
+index 48861ec..6a9bb0f 100644
+--- a/src/main/drivers/optrange/optrange_mtf.c
++++ b/src/main/drivers/optrange/optrange_mtf.c
+@@ -82,6 +82,8 @@ static uint8_t mtfFlowQuality;
+ static uint8_t mtfFlowStatus;
+ 
+ static uint16_t mtferrors = 0;
++static uint32_t mtfBytesRx = 0;
++static uint16_t mtfFramesOk = 0;
+ 
+ void mtfInit(optrangeDev_t *dev) {
+   UNUSED(dev);
+@@ -108,6 +110,7 @@ void mtfUpdate(optrangeDev_t *dev) {
+ 
+   while (serialRxBytesWaiting(mtfSerialPort)) {
+     uint8_t c = serialRead(mtfSerialPort);
++    mtfBytesRx++;
+ 
+     switch (mtfFrameState) {
+     case MTF_FRAME_STATE_WAIT_START:
+@@ -189,6 +192,7 @@ void mtfUpdate(optrangeDev_t *dev) {
+         }
+ 
+         lastFrameReceivedMs = timeNowMs;
++        mtfFramesOk++;
+       } else {
+         mtferrors++;
+       }
+@@ -205,9 +209,18 @@ void mtfUpdate(optrangeDev_t *dev) {
+     }
+   }
+ 
+-  if (timeNowMs - lastFrameReceivedMs > MTF_TIMEOUT_MS) {
+-    // who cares?
++  // The sensor boots in MSP mode and can miss the one-time switch command sent from
++  // mtfDetect if it is not ready yet. Until a valid Micolink frame has been seen, resend it every second.
++  static timeMs_t lastSwitchCmdMs = 0;
++  if (timeNowMs - lastFrameReceivedMs > 1000 && timeNowMs - lastSwitchCmdMs > 1000) {
++    serialWriteBuf(mtfSerialPort, MTF_SET_MICOLINK_PROTOCOL_SEQUENCE,
++                   MTF_SET_MICOLINK_PROTOCOL_LENGTH);
++    lastSwitchCmdMs = timeNowMs;
+   }
++
++  // debug (debug_mode = OPTICALFLOW): [0] bytes received (low 16 bits), [3] frames ok (high byte) | checksum errors (low byte)
++  DEBUG_SET(DEBUG_OPTICALFLOW, 0, (int16_t)(mtfBytesRx & 0xFFFF));
++  DEBUG_SET(DEBUG_OPTICALFLOW, 3, (int16_t)(((mtfFramesOk & 0xFF) << 8) | (mtferrors & 0xFF)));
+ }
+ 
+ optrangeRangefinderData_t mtfGetRangefinderData(optrangeDev_t *dev) {
+diff --git a/src/main/fc/core.c b/src/main/fc/core.c
+index 939f706..6e91410 100644
+--- a/src/main/fc/core.c
++++ b/src/main/fc/core.c
+@@ -60,6 +60,7 @@
+ #include "fc/stats.h"
+ 
+ #include "flight/failsafe.h"
++#include "flight/height_hold.h"
+ #include "flight/gps_rescue.h"
+ 
+ #if defined(USE_DYN_NOTCH_FILTER)
+@@ -840,6 +841,11 @@ bool processRx(timeUs_t currentTimeUs)
+         pidSetItermReset(true);
+         pidStabilisationState(currentPidProfile->pidAtMinThrottle ? PID_STABILISATION_ON : PID_STABILISATION_OFF);
+     }
++#ifdef USE_EKF
++    if (heightHoldOnGround()) {
++        pidSetItermReset(true);                       // on the floor: no integrator wind-up (see height_hold.c)
++    }
++#endif
+ 
+ #ifdef USE_RUNAWAY_TAKEOFF
+     // If runaway_takeoff_prevention is enabled, accumulate the amount of time that throttle
+diff --git a/src/main/fc/init.c b/src/main/fc/init.c
+index 9d6baf6..fdcd0ba 100644
+--- a/src/main/fc/init.c
++++ b/src/main/fc/init.c
+@@ -97,6 +97,7 @@
+ #include "flight/failsafe.h"
+ #include "flight/imu.h"
+ #ifdef USE_EKF
++#include "flight/height_hold.h"
+ #include "flight/kinematic_estimator.h"
+ #endif
+ #include "flight/mixer.h"
+@@ -758,6 +759,7 @@ void init(void)
+     imuInit();
+ #ifdef USE_EKF
+     kinematicEstimatorInit();
++    heightHoldInit();
+ #endif
+ 
+     failsafeInit();
+diff --git a/src/main/fc/rc.c b/src/main/fc/rc.c
+index 0cf640b..8fb0f4d 100644
+--- a/src/main/fc/rc.c
++++ b/src/main/fc/rc.c
+@@ -158,6 +158,16 @@ static int16_t rcLookupThrottle(int32_t tmp)
+     return lookupThrottleRC[tmp2] + (tmp - tmp2 * 100) * (lookupThrottleRC[tmp2 + 1] - lookupThrottleRC[tmp2]) / 100;
+ }
+ 
++int16_t rcCommandThrottleFromUs(float us)         // exactly the non-3D throttle path of updateRcCommands(), for a throttle given in channel microseconds (height hold)
++{
++    int32_t tmp = constrain((int32_t)us, rxConfig()->mincheck, PWM_RANGE_MAX);
++    tmp = (uint32_t)(tmp - rxConfig()->mincheck) * PWM_RANGE_MIN / (PWM_RANGE_MAX - rxConfig()->mincheck);
++    if (getLowVoltageCutoff()->enabled) {
++        tmp = tmp * getLowVoltageCutoff()->percentage / 100;
++    }
++    return rcLookupThrottle(tmp);
++}
++
+ #define SETPOINT_RATE_LIMIT_MIN -1998.0f
+ #define SETPOINT_RATE_LIMIT_MAX 1998.0f
+ STATIC_ASSERT(CONTROL_RATE_CONFIG_RATE_LIMIT_MAX <= (uint16_t)SETPOINT_RATE_LIMIT_MAX, CONTROL_RATE_CONFIG_RATE_LIMIT_MAX_too_large);
+diff --git a/src/main/fc/rc.h b/src/main/fc/rc.h
+index 34911c7..679f683 100644
+--- a/src/main/fc/rc.h
++++ b/src/main/fc/rc.h
+@@ -36,6 +36,7 @@ float getRcDeflectionRaw(int axis);
+ float getRcDeflectionAbs(int axis);
+ float getMaxRcDeflectionAbs(void);
+ void updateRcCommands(void);
++int16_t rcCommandThrottleFromUs(float us);
+ void resetYawAxis(void);
+ void initRcProcessing(void);
+ bool isMotorsReversed(void);
+diff --git a/src/main/fc/tasks.c b/src/main/fc/tasks.c
+index 9b80d5b..0aa0ca0 100644
+--- a/src/main/fc/tasks.c
++++ b/src/main/fc/tasks.c
+@@ -56,6 +56,7 @@
+ #include "flight/gps_rescue.h"
+ #include "flight/imu.h"
+ #ifdef USE_EKF
++#include "flight/height_hold.h"
+ #include "flight/kinematic_estimator.h"
+ #endif
+ #include "flight/mixer.h"
+@@ -317,6 +318,7 @@ void taskUpdateRangefinder(timeUs_t currentTimeUs) {
+ 
+   rangefinderGetLatestMeasurement(&rangefinderMeasurement);
+   kinematicEstimatorUpdateFromRangefinder(&rangefinderMeasurement);
++  heightHoldUpdate(micros());
+ #else
+   rangefinderProcess(getCosTiltAngle());
+ #endif
+diff --git a/src/main/flight/kinematic_estimator.c b/src/main/flight/kinematic_estimator.c
+index a572b45..11a78f7 100644
+--- a/src/main/flight/kinematic_estimator.c
++++ b/src/main/flight/kinematic_estimator.c
+@@ -524,6 +524,12 @@ void kinematicEstimatorUpdateFromOpticalflow(
+       attitudeQuat, opticalflowVarianceScale);
+ }
+ 
++static timeUs_t kinematicEstimatorLastRangeUs = 0;
++
++uint32_t kinematicEstimatorRangeAgeUs(timeUs_t nowUs) {
++  return kinematicEstimatorLastRangeUs == 0 ? UINT32_MAX : (uint32_t)(nowUs - kinematicEstimatorLastRangeUs);
++}
++
+ void kinematicEstimatorUpdateFromRangefinder(
+     const rangefinderMeasurement_t *rangefinderMeasurement) {
+   if (!rangefinderMeasurement || !rangefinderMeasurement->isHealthy ||
+@@ -545,6 +551,7 @@ void kinematicEstimatorUpdateFromRangefinder(
+       kinematicEstimatorCentimetersToMeters(
+           (float)rangefinderMeasurement->calculatedAltitudeCm),
+       rangefinderVarianceScale);
++  kinematicEstimatorLastRangeUs = micros();
+ }
+ 
+ #ifdef USE_EKF_GPS
+diff --git a/src/main/flight/kinematic_estimator.h b/src/main/flight/kinematic_estimator.h
+index 081788f..a1ac9da 100644
+--- a/src/main/flight/kinematic_estimator.h
++++ b/src/main/flight/kinematic_estimator.h
+@@ -52,6 +52,7 @@ void kinematicEstimatorUpdateFromGps(const gpsSolutionData_t *gpsSolution);
+ 
+ const kinematicFilter_t *kinematicEstimatorGetFilter(void);
+ const kinematicState_t *kinematicEstimatorGetState(void);
++uint32_t kinematicEstimatorRangeAgeUs(timeUs_t nowUs);   /* time since the last range sample was fused (UINT32_MAX = never) */
+ 
+ #ifdef __cplusplus
+ }
+diff --git a/src/main/flight/mixer.c b/src/main/flight/mixer.c
+index 6faed64..3240556 100644
+--- a/src/main/flight/mixer.c
++++ b/src/main/flight/mixer.c
+@@ -46,6 +46,7 @@
+ #include "fc/runtime_config.h"
+ 
+ #include "flight/failsafe.h"
++#include "flight/height_hold.h"
+ #include "flight/gps_rescue.h"
+ #include "flight/imu.h"
+ #include "flight/mixer_init.h"
+@@ -216,7 +217,11 @@ static void calculateThrottleAndCurrentMotorEndpoints(timeUs_t currentTimeUs)
+             pidResetIterm();
+         }
+     } else {
++#ifdef USE_EKF
++        throttle = (heightHoldIsActive() ? heightHoldRcCommandThrottle() : rcCommand[THROTTLE]) - PWM_RANGE_MIN + throttleAngleCorrection;
++#else
+         throttle = rcCommand[THROTTLE] - PWM_RANGE_MIN + throttleAngleCorrection;
++#endif
+         currentThrottleInputRange = PWM_RANGE;
+ #ifdef USE_DYN_IDLE
+         if (mixerRuntime.dynIdleMinRps > 0.0f) {
+diff --git a/src/main/msp/msp_box.c b/src/main/msp/msp_box.c
+index b83d1cf..2229150 100644
+--- a/src/main/msp/msp_box.c
++++ b/src/main/msp/msp_box.c
+@@ -350,6 +350,9 @@ void initActiveBoxIds(void)
+ 
+ #ifdef USE_EKF
+     BME(BOXEKFRESET);
++#ifdef USE_EKF
++    BME(BOXUSER1);   // FC height hold request (flight/height_hold.c): always selectable, no pinio facility needed
++#endif
+ #endif
+ 
+ #undef BME
+diff --git a/src/main/rx/crsf_protocol.h b/src/main/rx/crsf_protocol.h
+index ea9d6b7..0c218cc 100644
+--- a/src/main/rx/crsf_protocol.h
++++ b/src/main/rx/crsf_protocol.h
+@@ -112,9 +112,9 @@ enum {
+     CRSF_FRAME_ATTITUDE_PAYLOAD_SIZE = 6,
+     CRSF_FRAME_DEVICE_PING_PAYLOAD_SIZE = 2,
+     CRSF_FRAME_RANGEFINDER_TF_PAYLOAD_SIZE = 4,
+-    CRSF_FRAME_OPTRANGE_PAYLOAD_SIZE = 10,
++    CRSF_FRAME_OPTRANGE_PAYLOAD_SIZE = 12, // [dest 0x00][origin 0xC8] + 10 data bytes
+     CRSF_FRAME_RAW_IMU_PAYLOAD_SIZE = 12,
+-    CRSF_FRAME_KINEMATIC_STATE_PAYLOAD_SIZE = 18, // pos xyz, vel xyz, attitude rpy
++    CRSF_FRAME_KINEMATIC_STATE_PAYLOAD_SIZE = 20, // [dest][origin] + pos xyz, vel xyz, attitude rpy
+ #ifdef USE_DSHOT_TELEMETRY
+     CRSF_FRAME_MOTOR_RPM_PAYLOAD_SIZE = 13, // with telemetry: 1 pole + 4*(1 pwm + 2 erpm)
+ #else
+diff --git a/src/main/rx/expresslrs_telemetry.c b/src/main/rx/expresslrs_telemetry.c
+index 1d41a4b..74ed7f9 100644
+--- a/src/main/rx/expresslrs_telemetry.c
++++ b/src/main/rx/expresslrs_telemetry.c
+@@ -531,7 +531,7 @@ void initTelemetry(void) {
+   }
+ #endif
+ 
+-#ifdef USE_EKF
++#if defined(USE_EKF) && defined(NIMBUS_SEND_KINEMATIC)
+   if (sensors(SENSOR_ACC) &&
+       telemetryIsSensorEnabled(SENSOR_ALTITUDE | SENSOR_PITCH | SENSOR_ROLL |
+                                SENSOR_HEADING)) {
+diff --git a/src/main/telemetry/crsf.c b/src/main/telemetry/crsf.c
+index 9afe79e..10ae310 100644
+--- a/src/main/telemetry/crsf.c
++++ b/src/main/telemetry/crsf.c
+@@ -39,6 +39,7 @@
+ #include "config/feature.h"
+ 
+ #include "common/crc.h"
++#include "common/printf.h"
+ #include "common/maths.h"
+ #include "common/streambuf.h"
+ #include "common/time.h"
+@@ -48,11 +49,14 @@
+ #include "drivers/nvic.h"
+ #include "drivers/persistent.h"
+ 
++#include "drivers/motor.h"
++#include "fc/rc.h"
+ #include "fc/rc_modes.h"
+ #include "fc/runtime_config.h"
+ 
+ #include "flight/imu.h"
+ #ifdef USE_EKF
++#include "flight/height_hold.h"
+ #include "flight/kinematic_estimator.h"
+ #endif
+ #include "flight/mixer.h"
+@@ -507,6 +511,8 @@ static void crsfFrameKinematicState(sbuf_t *dst) {
+   sbufWriteU8(dst, CRSF_FRAME_KINEMATIC_STATE_PAYLOAD_SIZE +
+                        CRSF_FRAME_LENGTH_TYPE_CRC);
+   sbufWriteU8(dst, CRSF_FRAMETYPE_KINEMATIC_STATE);
++  sbufWriteU8(dst, CRSF_ADDRESS_BROADCAST);          // [dest][origin] prefix, see the OPTRANGE frame
++  sbufWriteU8(dst, CRSF_ADDRESS_FLIGHT_CONTROLLER);
+ 
+   sbufWriteU16BigEndian(dst, (uint16_t)crsfMetersToMillimeters(state->posX));
+   sbufWriteU16BigEndian(dst, (uint16_t)crsfMetersToMillimeters(state->posY));
+@@ -565,6 +571,39 @@ void crsfFrameFlightMode(sbuf_t *dst) {
+     }
+ 
+   sbufWriteString(dst, flightMode);
++#ifdef USE_EKF
++  if (heightHoldIsActive()) {
++    sbufWriteString(dst, " HH");
++  } else if (heightHoldHasFault()) {
++    sbufWriteString(dst, " HF");
++  }
++  {
++    /* wireless diagnostics, three variants in rotation (one per flight-mode frame, ~1 Hz each):
++     *  0: motors (as MSP_MOTOR, 1000..2000) and the throttle in use (us)      " M1500,1500,1500,1500 T1500"
++     *  1: PID terms per axis (roll,pitch,yaw), pid units ~ motor us           " P1,2,3 I4,5,6 D7,8,9"
++     *  2: filtered gyro rate (0.1 deg/s) and the PID sum per axis             " G1,2,3 S4,5,6"                                                          */
++    static uint8_t diagVariant = 0;
++    char dbg[64];
++#define DIAGCLAMP(x) ((int)constrainf(lrintf(x), -999.0f, 999.0f))
++    if (diagVariant == 0) {
++      const int thr = heightHoldIsActive() ? (int)heightHoldRcCommandThrottle() : (int)lrintf(rcCommand[THROTTLE]);
++      tfp_sprintf(dbg, " M%d,%d,%d,%d T%d", (int)motorConvertToExternal(motor[0]), (int)motorConvertToExternal(motor[1]),
++                  (int)motorConvertToExternal(motor[2]), (int)motorConvertToExternal(motor[3]), thr);
++    } else if (diagVariant == 1) {
++      tfp_sprintf(dbg, " P%d,%d,%d I%d,%d,%d D%d,%d,%d",
++                  DIAGCLAMP(pidData[FD_ROLL].P), DIAGCLAMP(pidData[FD_PITCH].P), DIAGCLAMP(pidData[FD_YAW].P),
++                  DIAGCLAMP(pidData[FD_ROLL].I), DIAGCLAMP(pidData[FD_PITCH].I), DIAGCLAMP(pidData[FD_YAW].I),
++                  DIAGCLAMP(pidData[FD_ROLL].D), DIAGCLAMP(pidData[FD_PITCH].D), DIAGCLAMP(pidData[FD_YAW].D));
++    } else {
++      tfp_sprintf(dbg, " G%d,%d,%d S%d,%d,%d",
++                  DIAGCLAMP(gyro.gyroADCf[FD_ROLL] * 10.0f), DIAGCLAMP(gyro.gyroADCf[FD_PITCH] * 10.0f), DIAGCLAMP(gyro.gyroADCf[FD_YAW] * 10.0f),
++                  DIAGCLAMP(pidData[FD_ROLL].Sum), DIAGCLAMP(pidData[FD_PITCH].Sum), DIAGCLAMP(pidData[FD_YAW].Sum));
++    }
++#undef DIAGCLAMP
++    diagVariant = (diagVariant + 1) % 3;
++    sbufWriteString(dst, dbg);
++  }
++#endif
+   if (!ARMING_FLAG(ARMED)) {
+     sbufWriteU8(dst, '*');
+   }
+@@ -828,6 +867,9 @@ static void crsfFrameOpticalflowRangefinder(sbuf_t *dst) {
+   sbufWriteU8(dst,
+               CRSF_FRAME_OPTRANGE_PAYLOAD_SIZE + CRSF_FRAME_LENGTH_TYPE_CRC);
+   sbufWriteU8(dst, CRSF_FRAMETYPE_OPTRANGE);
++  // ELRS 4.x reads custom types >= 0x28 as addressed frames: [dest][origin] first, so data bytes are never mistaken for addresses
++  sbufWriteU8(dst, CRSF_ADDRESS_BROADCAST);
++  sbufWriteU8(dst, CRSF_ADDRESS_FLIGHT_CONTROLLER);
+ 
+   const int32_t distValueCm = rangefinderGetLatestAltitude();
+   const int32_t distValueMm = (distValueCm >= 0) ? (distValueCm * 10) : distValueCm;
+@@ -1244,7 +1286,7 @@ void initCrsfTelemetry(void) {
+ #endif
+   }
+ #endif
+-#if defined(USE_EKF) && !defined(EKF_ONLY)
++#if defined(USE_EKF) && !defined(EKF_ONLY) && defined(NIMBUS_SEND_KINEMATIC)
+   if (sensors(SENSOR_ACC) &&
+       telemetryIsSensorEnabled(SENSOR_ALTITUDE | SENSOR_PITCH | SENSOR_ROLL |
+                                SENSOR_HEADING)) {

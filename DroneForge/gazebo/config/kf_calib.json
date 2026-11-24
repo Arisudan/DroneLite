@@ -1,0 +1,37 @@
+{
+ "q_scale": 0.5879932205288048,
+ "flow_r0": 0.006552896024001582,
+ "flow_sigma_ms": 0.08094995999999989,
+ "flow_scale_vs_fc_ekf": 1.1300679440295955,
+ "flow_lag_s": 0.0,
+ "range_sigma_a": 0.002,
+ "range_sigma_b": 0.01947416621600815,
+ "att_sigma_rad": 0.002,
+ "att_var": 4e-06,
+ "gyro_sigma_rad_s": 0.01056393543443322,
+ "gyro_var": 0.00011159673186287379,
+ "nis_flow_final": 0.9598949832145405,
+ "airborne_s": 569.12,
+ "flights": 16,
+ "gyro_files": [
+  "LOG00004_053000_4.BFL",
+  "LOG00003_053000_4.BFL",
+  "LOG00012_053000.BFL",
+  "LOG00005_053000_4.BFL",
+  "LOG00017_053000.BFL",
+  "LOG00005_053000.BFL"
+ ],
+ "real_plant_regression": {
+  "K_signed": 3.0781049894218757,
+  "D": 0.7082231627657171,
+  "r2": 0.017696349755426444,
+  "n": 25411,
+  "tilt_std_deg": 0.25399383116533586
+ },
+ "real_plant_applied": false,
+ "notes": [
+  "the flow-vs-FC-EKF scale is only reported (which of the two reads right is not known without an independent speed), it is not applied",
+  "569 s of real airborne data, mostly hover-like: drag and tilt gain are NOT identified from it (use the sysid in the simulator, or a real tilt-step flight)",
+  "recordings have no yaw: replay assumes a constant heading"
+ ]
+}

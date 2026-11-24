@@ -1,0 +1,23 @@
+# keep the repository to code + small build outputs; these stay on the development machines
+__pycache__/
+*.pyc
+.pytest_cache/
+*.log
+*.tar
+*.tar.gz
+*.bz2
+*.zip
+/archive/
+/reference/
+/docs/fc_logs/
+/docs/flights/
+/gazebo/vision/models/
+/gazebo/third_party/
+/gazebo/worlds/last_*
+/firmware/tx_dongle/
+/firmware/fc_matek_h743/config_backups/
+/firmware/fc_matek_h743/source_snapshots/
+/handoff_claude/memory/
+/tools_scripts/tx_build/
+# ELRS binding phrase / UID and receiver configs never go into git
+*bind*phrase*

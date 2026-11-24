@@ -1,0 +1,385 @@
+<?xml version="1.0" ?>
+<sdf version="1.8">
+  <model name="droneforge_3in_house">
+    <pose>0 0 0.05 0 0 0</pose>
+    <link name="base_link">
+      <inertial>
+        <mass>0.3425</mass>
+        <inertia>
+          <ixx>0.0012</ixx>
+          <ixy>0.0</ixy>
+          <ixz>0.0</ixz>
+          <iyy>0.0015</iyy>
+          <iyz>0.0</iyz>
+          <izz>0.0022</izz>
+        </inertia>
+      </inertial>
+
+      <!-- Center Carbon Chassis -->
+      <visual name="chassis_visual">
+        <pose>0 0 0 0 0 0</pose>
+        <geometry>
+          <box>
+            <size>0.10 0.06 0.015</size>
+          </box>
+        </geometry>
+        <material>
+          <ambient>0.15 0.15 0.15 1.0</ambient>
+          <diffuse>0.2 0.2 0.2 1.0</diffuse>
+          <specular>0.4 0.4 0.4 1.0</specular>
+        </material>
+      </visual>
+
+      <!-- 4S LiPo Battery (Mounted on top) -->
+      <visual name="battery_visual">
+        <pose>-0.01 0 0.022 0 0 0</pose>
+        <geometry>
+          <box>
+            <size>0.065 0.035 0.028</size>
+          </box>
+        </geometry>
+        <material>
+          <ambient>0.8 0.6 0.1 1.0</ambient>
+          <diffuse>0.9 0.7 0.1 1.0</diffuse>
+          <specular>0.3 0.3 0.3 1.0</specular>
+        </material>
+      </visual>
+
+      <!-- DJI O4 Air Unit (Internal module) -->
+      <visual name="air_unit_visual">
+        <pose>0.01 0 0.008 0 0 0</pose>
+        <geometry>
+          <box>
+            <size>0.032 0.032 0.014</size>
+          </box>
+        </geometry>
+        <material>
+          <ambient>0.3 0.3 0.35 1.0</ambient>
+          <diffuse>0.4 0.4 0.45 1.0</diffuse>
+        </material>
+      </visual>
+
+      <!-- DJI O4 Camera & Mount (Front uptilted 15 deg) -->
+      <visual name="dji_camera_visual">
+        <pose>0.062 0 0.022 0 0 0</pose>
+        <geometry>
+          <box>
+            <size>0.022 0.020 0.020</size>
+          </box>
+        </geometry>
+        <material>
+          <ambient>0.05 0.05 0.05 1.0</ambient>
+          <diffuse>0.1 0.1 0.1 1.0</diffuse>
+          <specular>0.8 0.8 0.8 1.0</specular>
+        </material>
+      </visual>
+      <visual name="dji_camera_lens_visual">
+        <pose>0.073 0 0.025 0 1.8326 0</pose>
+        <geometry>
+          <cylinder>
+            <radius>0.007</radius>
+            <length>0.008</length>
+          </cylinder>
+        </geometry>
+        <material>
+          <ambient>0.0 0.3 0.6 1.0</ambient>
+          <diffuse>0.0 0.5 0.8 1.0</diffuse>
+          <specular>1.0 1.0 1.0 1.0</specular>
+        </material>
+      </visual>
+
+      <!-- MTF-02 Sensor (Bottom downward range & flow) -->
+      <visual name="mtf02_visual">
+        <pose>0 0 -0.012 0 0 0</pose>
+        <geometry>
+          <box>
+            <size>0.025 0.016 0.008</size>
+          </box>
+        </geometry>
+        <material>
+          <ambient>0.1 0.4 0.1 1.0</ambient>
+          <diffuse>0.2 0.7 0.2 1.0</diffuse>
+        </material>
+      </visual>
+
+      <!-- Carbon Arms (Quad-X diagonal) -->
+      <visual name="arm_front_right">
+        <pose>0.028 -0.028 0 0 0 -0.7854</pose>
+        <geometry><box><size>0.075 0.010 0.004</size></box></geometry>
+        <material><diffuse>0.15 0.15 0.15 1.0</diffuse></material>
+      </visual>
+      <visual name="arm_rear_left">
+        <pose>-0.028 0.028 0 0 0 -0.7854</pose>
+        <geometry><box><size>0.075 0.010 0.004</size></box></geometry>
+        <material><diffuse>0.15 0.15 0.15 1.0</diffuse></material>
+      </visual>
+      <visual name="arm_front_left">
+        <pose>0.028 0.028 0 0 0 0.7854</pose>
+        <geometry><box><size>0.075 0.010 0.004</size></box></geometry>
+        <material><diffuse>0.15 0.15 0.15 1.0</diffuse></material>
+      </visual>
+      <visual name="arm_rear_right">
+        <pose>-0.028 -0.028 0 0 0 0.7854</pose>
+        <geometry><box><size>0.075 0.010 0.004</size></box></geometry>
+        <material><diffuse>0.15 0.15 0.15 1.0</diffuse></material>
+      </visual>
+
+      <!-- Main Body Collision -->
+      <collision name="main_collision">
+        <pose>0 0 -0.005 0 0 0</pose>
+        <geometry>
+          <box>
+            <size>0.11 0.08 0.035</size>
+          </box>
+        </geometry>
+        <surface>
+          <contact>
+            <ode>
+              <min_depth>0.002</min_depth>
+              <max_vel>0.0</max_vel>
+            </ode>
+          </contact>
+          <friction>
+            <ode>
+              <mu>1.0</mu>
+              <mu2>1.0</mu2>
+            </ode>
+          </friction>
+        </surface>
+      </collision>
+
+      <!-- ================= SENSORS ================= -->
+
+      <!-- DJI O4 FPV Camera (forward, LEVEL, centred on the body axis) -->
+      <sensor name="dji_o4_camera" type="camera">
+        <pose>0.065 0 0.025 0 0 0</pose>
+        <camera>
+          <horizontal_fov>1.668</horizontal_fov>
+          <image>
+            <width>640</width>
+            <height>480</height>
+            <format>R8G8B8</format>
+          </image>
+          <clip>
+            <near>0.05</near>
+            <far>100.0</far>
+          </clip>
+        </camera>
+        <always_on>1</always_on>
+        <update_rate>30</update_rate>
+        <visualize>true</visualize>
+        <topic>/droneforge/camera/image_raw</topic>
+      </sensor>
+
+      <!-- MTF-02 range: computed by the sim FC (controllers/fc_v4_5_bridge.py) from the height, tilt-corrected, 24 Hz. A gpu_lidar here renders the whole house again
+           and cost the 30 fps camera ~2 fps (measured 2026-11-21: 28.0 -> 30.2 Hz without it). -->
+
+      <!-- Onboard 6-DOF IMU (Matek H743) -->
+      <sensor name="imu_sensor" type="imu">
+        <pose>0 0 0.005 0 0 0</pose>
+        <always_on>1</always_on>
+        <update_rate>240</update_rate>
+        <visualize>false</visualize>
+        <topic>/droneforge/sensors/imu</topic>
+      </sensor>
+    </link>
+
+    <!-- ================= ROTORS (Quad-X, 3-inch) ================= -->
+
+    <!-- Motor 1 (Rear Right) - Betaflight M1 -->
+    <link name="rotor_0">
+      <pose>-0.05 -0.05 0.015 0 0 0</pose>
+      <inertial>
+        <mass>0.010</mass>
+        <inertia>
+          <ixx>1e-05</ixx><ixy>0</ixy><ixz>0</ixz>
+          <iyy>1e-05</iyy><iyz>0</iyz>
+          <izz>2e-05</izz>
+        </inertia>
+      </inertial>
+      <visual name="rotor_0_prop">
+        <geometry><cylinder><radius>0.0381</radius><length>0.004</length></cylinder></geometry>
+        <material><diffuse>0.8 0.1 0.1 0.7</diffuse></material>
+      </visual>
+    </link>
+    <joint name="rotor_0_joint" type="revolute">
+      <parent>base_link</parent>
+      <child>rotor_0</child>
+      <axis>
+        <xyz>0 0 1</xyz>
+        <limit>
+          <lower>-1e+16</lower>
+          <upper>1e+16</upper>
+        </limit>
+      </axis>
+    </joint>
+
+    <!-- Motor 2 (Front Right) - Betaflight M2 -->
+    <link name="rotor_1">
+      <pose>0.05 -0.05 0.015 0 0 0</pose>
+      <inertial>
+        <mass>0.010</mass>
+        <inertia>
+          <ixx>1e-05</ixx><ixy>0</ixy><ixz>0</ixz>
+          <iyy>1e-05</iyy><iyz>0</iyz>
+          <izz>2e-05</izz>
+        </inertia>
+      </inertial>
+      <visual name="rotor_1_prop">
+        <geometry><cylinder><radius>0.0381</radius><length>0.004</length></cylinder></geometry>
+        <material><diffuse>0.1 0.1 0.8 0.7</diffuse></material>
+      </visual>
+    </link>
+    <joint name="rotor_1_joint" type="revolute">
+      <parent>base_link</parent>
+      <child>rotor_1</child>
+      <axis>
+        <xyz>0 0 1</xyz>
+        <limit>
+          <lower>-1e+16</lower>
+          <upper>1e+16</upper>
+        </limit>
+      </axis>
+    </joint>
+
+    <!-- Motor 3 (Rear Left) - Betaflight M3 -->
+    <link name="rotor_2">
+      <pose>-0.05 0.05 0.015 0 0 0</pose>
+      <inertial>
+        <mass>0.010</mass>
+        <inertia>
+          <ixx>1e-05</ixx><ixy>0</ixy><ixz>0</ixz>
+          <iyy>1e-05</iyy><iyz>0</iyz>
+          <izz>2e-05</izz>
+        </inertia>
+      </inertial>
+      <visual name="rotor_2_prop">
+        <geometry><cylinder><radius>0.0381</radius><length>0.004</length></cylinder></geometry>
+        <material><diffuse>0.8 0.1 0.1 0.7</diffuse></material>
+      </visual>
+    </link>
+    <joint name="rotor_2_joint" type="revolute">
+      <parent>base_link</parent>
+      <child>rotor_2</child>
+      <axis>
+        <xyz>0 0 1</xyz>
+        <limit>
+          <lower>-1e+16</lower>
+          <upper>1e+16</upper>
+        </limit>
+      </axis>
+    </joint>
+
+    <!-- Motor 4 (Front Left) - Betaflight M4 -->
+    <link name="rotor_3">
+      <pose>0.05 0.05 0.015 0 0 0</pose>
+      <inertial>
+        <mass>0.010</mass>
+        <inertia>
+          <ixx>1e-05</ixx><ixy>0</ixy><ixz>0</ixz>
+          <iyy>1e-05</iyy><iyz>0</iyz>
+          <izz>2e-05</izz>
+        </inertia>
+      </inertial>
+      <visual name="rotor_3_prop">
+        <geometry><cylinder><radius>0.0381</radius><length>0.004</length></cylinder></geometry>
+        <material><diffuse>0.1 0.1 0.8 0.7</diffuse></material>
+      </visual>
+    </link>
+    <joint name="rotor_3_joint" type="revolute">
+      <parent>base_link</parent>
+      <child>rotor_3</child>
+      <axis>
+        <xyz>0 0 1</xyz>
+        <limit>
+          <lower>-1e+16</lower>
+          <upper>1e+16</upper>
+        </limit>
+      </axis>
+    </joint>
+
+    <!-- ================= MOTOR MODEL PLUGINS ================= -->
+
+    <!-- Rotor 0 (M1 - Rear Right) -->
+    <plugin filename="gz-sim-multicopter-motor-model-system" name="gz::sim::systems::MulticopterMotorModel">
+      <robotNamespace>droneforge</robotNamespace>
+      <jointName>rotor_0_joint</jointName>
+      <linkName>rotor_0</linkName>
+      <turningDirection>cw</turningDirection>
+      <timeConstantUp>0.012</timeConstantUp>
+      <timeConstantDown>0.024</timeConstantDown>
+      <maxRotVelocity>1500.0</maxRotVelocity>
+      <motorConstant>1.513e-06</motorConstant>
+      <momentConstant>0.016</momentConstant>
+      <commandSubTopic>command/motor_speed</commandSubTopic>
+      <actuator_number>0</actuator_number>
+      <rotorDragCoefficient>8.0e-05</rotorDragCoefficient>
+      <rollingMomentCoefficient>1e-06</rollingMomentCoefficient>
+      <motorType>velocity</motorType>
+    </plugin>
+
+    <!-- Rotor 1 (M2 - Front Right) -->
+    <plugin filename="gz-sim-multicopter-motor-model-system" name="gz::sim::systems::MulticopterMotorModel">
+      <robotNamespace>droneforge</robotNamespace>
+      <jointName>rotor_1_joint</jointName>
+      <linkName>rotor_1</linkName>
+      <turningDirection>ccw</turningDirection>
+      <timeConstantUp>0.012</timeConstantUp>
+      <timeConstantDown>0.024</timeConstantDown>
+      <maxRotVelocity>1500.0</maxRotVelocity>
+      <motorConstant>1.513e-06</motorConstant>
+      <momentConstant>0.016</momentConstant>
+      <commandSubTopic>command/motor_speed</commandSubTopic>
+      <actuator_number>1</actuator_number>
+      <rotorDragCoefficient>8.0e-05</rotorDragCoefficient>
+      <rollingMomentCoefficient>1e-06</rollingMomentCoefficient>
+      <motorType>velocity</motorType>
+    </plugin>
+
+    <!-- Rotor 2 (M3 - Rear Left) -->
+    <plugin filename="gz-sim-multicopter-motor-model-system" name="gz::sim::systems::MulticopterMotorModel">
+      <robotNamespace>droneforge</robotNamespace>
+      <jointName>rotor_2_joint</jointName>
+      <linkName>rotor_2</linkName>
+      <turningDirection>ccw</turningDirection>
+      <timeConstantUp>0.012</timeConstantUp>
+      <timeConstantDown>0.024</timeConstantDown>
+      <maxRotVelocity>1500.0</maxRotVelocity>
+      <motorConstant>1.513e-06</motorConstant>
+      <momentConstant>0.016</momentConstant>
+      <commandSubTopic>command/motor_speed</commandSubTopic>
+      <actuator_number>2</actuator_number>
+      <rotorDragCoefficient>8.0e-05</rotorDragCoefficient>
+      <rollingMomentCoefficient>1e-06</rollingMomentCoefficient>
+      <motorType>velocity</motorType>
+    </plugin>
+
+    <!-- Rotor 3 (M4 - Front Left) -->
+    <plugin filename="gz-sim-multicopter-motor-model-system" name="gz::sim::systems::MulticopterMotorModel">
+      <robotNamespace>droneforge</robotNamespace>
+      <jointName>rotor_3_joint</jointName>
+      <linkName>rotor_3</linkName>
+      <turningDirection>cw</turningDirection>
+      <timeConstantUp>0.012</timeConstantUp>
+      <timeConstantDown>0.024</timeConstantDown>
+      <maxRotVelocity>1500.0</maxRotVelocity>
+      <motorConstant>1.513e-06</motorConstant>
+      <momentConstant>0.016</momentConstant>
+      <commandSubTopic>command/motor_speed</commandSubTopic>
+      <actuator_number>3</actuator_number>
+      <rotorDragCoefficient>8.0e-05</rotorDragCoefficient>
+      <rollingMomentCoefficient>1e-06</rollingMomentCoefficient>
+      <motorType>velocity</motorType>
+    </plugin>
+
+    <!-- Odometry Publisher -->
+    <plugin filename="gz-sim-odometry-publisher-system" name="gz::sim::systems::OdometryPublisher">
+      <odom_frame>odom</odom_frame>
+      <robot_base_frame>droneforge_3in/base_link</robot_base_frame>
+      <dimensions>3</dimensions>
+      <odom_publish_frequency>50</odom_publish_frequency>
+      <odom_topic>/droneforge/odometry</odom_topic>
+    </plugin>
+
+  </model>
+</sdf>

@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "nimbus-pc"
+version = "0.2.0"
+description = "NimbusOS-style PC side for an ExpressLRS dongle: CRSF sender, telemetry, commands, failsafe"
+requires-python = ">=3.9"
+dependencies = []          # standard library only (the GCS needs PyQt6, see the gui extra)
+
+[project.optional-dependencies]
+gui = ["PyQt6"]
+
+[project.scripts]
+nimbus-pc = "nimbus_pc.cli:main"
+nimbus-gcs = "nimbus_gcs.__main__:main"
+
+[tool.setuptools]
+packages = ["nimbus_pc", "nimbus_pc.tests", "nimbus_pc.hover", "nimbus_core", "nimbus_core.tests", "nimbus_gcs", "nimbus_gcs.tests"]

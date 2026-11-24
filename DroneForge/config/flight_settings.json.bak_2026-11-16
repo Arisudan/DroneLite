@@ -1,0 +1,11 @@
+{
+ "hover_height": 1.0,
+ "thr_hover0": 0.6598,
+ "thr_max": 0.81,
+ "measured": true,
+ "batt_ref_v": 13.8,
+ "creep_per_s": 0.0074,
+ "xy_source": "fc",
+ "battery_scale": 1.22,
+ "ceiling_m": 3.0
+}

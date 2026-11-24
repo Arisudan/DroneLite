@@ -1,0 +1,42 @@
+--- height_hold_core.c	2026-11-21 17:28:31.858940181 +0530
++++ /home/htic/Music/DroneForge/firmware/fc_matek_h743/builds/2026-11-24_fc-hybrid-v4.7.1_BUILT_NOT-FLASHED/src/height_hold_core.c	2026-11-24 11:03:13.549520981 +0530
+@@ -18,8 +18,8 @@
+ 
+ void hhDefaults(hhParams_t *p)
+ {
+-    p->kp_z = 1.40f; p->kv_z = 0.15f; p->ki_z = 0.06f; p->i_max = 0.20f;      /* v4.6 tighter height hold (was kp 0.9923, kv 0.10, ki 0.04): stiffer tracking and firmer vertical damping */
+-    p->vz_lim = 0.4581f; p->climb_peak_frac = 0.45f; p->descent_peak_frac = 0.45f;
++    p->kp_z = 1.40f; p->kv_z = 0.15f; p->ki_z = 0.15f; p->i_max = 0.20f;      /* v4.7.1: ki 0.06 -> 0.15 (bench 2026-11-24: take-off settle 8.4 -> 5.9 s, mean error 6.4 -> 2.3 mm) */      /* v4.6 tighter height hold (was kp 0.9923, kv 0.10, ki 0.04): stiffer tracking and firmer vertical damping */
++    p->vz_lim = 0.4581f; p->climb_peak_frac = 0.35f; p->descent_peak_frac = 0.35f;      /* v4.7.1: 0.45 -> 0.35, a slightly gentler height change */
+     p->thr_idle = 0.05f; p->thr_max = 0.85f; p->drop_max = 0.30f;
+     p->overshoot_m = 0.10f; p->overshoot_vz = 0.40f; p->overshoot_cut = 0.08f;
+     p->height_min = 0.2f; p->height_max = 2.5f;
+@@ -160,7 +160,8 @@
+         const float c3 = 10.0f * D + 4.0f * V, c4 = -15.0f * D - 7.0f * V, c5 = 6.0f * D + 3.0f * V;
+         s->z_ref = s->z_from + V * u + c3 * u3 + c4 * u4 + c5 * u5;
+         s->vz_ff = (V + 3.0f * c3 * u2 + 4.0f * c4 * u3 + 5.0f * c5 * u4) / s->t_dur;
+-        if (u >= 1.0f) { s->trans = false; s->vz_ff = 0.0f; s->z_ref = s->z_to; }
++        s->az_ff = (6.0f * c3 * u + 12.0f * c4 * u2 + 20.0f * c5 * u3) / (s->t_dur * s->t_dur);
++        if (u >= 1.0f) { s->trans = false; s->vz_ff = 0.0f; s->az_ff = 0.0f; s->z_ref = s->z_to; }
+     }
+     const float e = s->z_ref - z;
+     /* sank back onto the floor in the hold (handed over too early, or the throttle base was too low): go back to the take-off creep from the current throttle instead of holding on the floor forever */
+@@ -186,6 +187,8 @@
+     /* near the floor the integrator may only grow (so a drone that settled back on the floor can lift again), bounded by i_max */
+     if ((z > 0.05f || e > 0.0f) && !sat_hi && !sat_lo) s->integ = clampf_(s->integ + p->ki_z * e * dt, -p->i_max, p->i_max);
+     float f = base + p->kv_z * (vz_ref - vz) + s->integ;
++    /* v4.7.1: acceleration feed-forward while a height change runs (thrust ~ u^2, so du = (f_base - idle) * a / 2g). Bench 2026-11-24: step overshoot 42 -> 21 mm */
++    if (s->mode == HH_MODE_HOLD && s->trans) f += (s->f_base - p->thr_idle) * s->az_ff / (2.0f * 9.81f);
+     if (s->mode == HH_MODE_HOLD) {
+         if (z > 0.05f && (z > s->z_ref + p->overshoot_m || vz > p->overshoot_vz)) {
+             /* v4.4: brake relative to what is actually holding the drone (base + integral), not to the bare base. On the real drone the base is the lift-off throttle in ground effect (~0.65)
+--- height_hold_core.h	2026-11-21 17:28:31.858968462 +0530
++++ /home/htic/Music/DroneForge/firmware/fc_matek_h743/builds/2026-11-24_fc-hybrid-v4.7.1_BUILT_NOT-FLASHED/src/height_hold_core.h	2026-11-24 11:03:13.550503887 +0530
+@@ -46,6 +46,7 @@
+ typedef struct {
+     bool  active;
+     float z_ref, vz_ff;                  /* current height reference (m) and its feed-forward speed (m/s) */
++    float az_ff;                         /* v4.7.1: the reference's acceleration (m/s^2) while a height change runs */
+     float integ;
+     float f_base, v0;                    /* hover throttle (at pack voltage v0) */
+     float target;                        /* where the reference is heading (m) */

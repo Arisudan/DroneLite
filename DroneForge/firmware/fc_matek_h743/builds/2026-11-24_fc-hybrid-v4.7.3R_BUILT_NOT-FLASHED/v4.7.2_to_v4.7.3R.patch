@@ -1,0 +1,97 @@
+--- /home/htic/Music/DroneForge/firmware/fc_matek_h743/builds/2026-11-24_fc-hybrid-v4.7.2_BUILT_NOT-FLASHED/src/height_hold.c	2026-11-24 11:55:40.119588437 +0530
++++ src/height_hold.c	2026-11-24 17:05:12.074818698 +0530
+@@ -242,10 +242,10 @@
+     if (altOnly) {
+         xyPaused = true;                                                       /* ALT HOLD: the height hold runs, the sideways loop gives no tilt */
+     } else if (xyPaused) {
+-        xyBrakeThenHold(&xyState); xyPaused = false;                           /* back to POS HOLD: v4.7 brake, then stay where it stopped (was: reposition at once) */
++        xyReposition(&xyState); xyPaused = false;                              /* back to POS HOLD: stay where it is now (v4.7.3R: as v4.6-rev1, no brake first) */
+     }
+     if (hhLastMode != HH_MODE_HOLD && hhState.mode == HH_MODE_HOLD) {
+-        xyBrakeThenHold(&xyState);                                             /* handover anchor: v4.7 brake first, the hold point is where the drone stopped */
++        xyReposition(&xyState);                                                /* handover anchor: reset position displacement to zero at hover location (v4.7.3R: as v4.6-rev1, no brake first) */
+     }
+     hhLastMode = hhState.mode;
+     if (!xyPaused && kinematicEstimatorGetBodyVelocity(&fwd, &rgt) && hhState.active) {
+--- /home/htic/Music/DroneForge/firmware/fc_matek_h743/builds/2026-11-24_fc-hybrid-v4.7.2_BUILT_NOT-FLASHED/src/height_hold_core.c	2026-11-24 11:55:40.117729139 +0530
++++ src/height_hold_core.c	2026-11-24 17:05:12.081302849 +0530
+@@ -18,8 +18,8 @@
+ 
+ void hhDefaults(hhParams_t *p)
+ {
+-    p->kp_z = 1.40f; p->kv_z = 0.15f; p->ki_z = 0.15f; p->i_max = 0.20f;      /* v4.7.1: ki 0.06 -> 0.15 (bench 2026-11-24: take-off settle 8.4 -> 5.9 s, mean error 6.4 -> 2.3 mm) */      /* v4.6 tighter height hold (was kp 0.9923, kv 0.10, ki 0.04): stiffer tracking and firmer vertical damping */
+-    p->vz_lim = 0.4581f; p->climb_peak_frac = 0.35f; p->descent_peak_frac = 0.35f;      /* v4.7.1: 0.45 -> 0.35, a slightly gentler height change */
++    p->kp_z = 1.40f; p->kv_z = 0.15f; p->ki_z = 0.06f; p->i_max = 0.20f;      /* v4.7.3R: ki 0.06 as v4.6-rev1 (v4.7.1 / v4.7.2: 0.15) */      /* v4.6 tighter height hold (was kp 0.9923, kv 0.10, ki 0.04): stiffer tracking and firmer vertical damping */
++    p->vz_lim = 0.4581f; p->climb_peak_frac = 0.45f; p->descent_peak_frac = 0.45f;      /* v4.7.3R: 0.45 as v4.6-rev1 (v4.7.1 / v4.7.2: 0.35) */
+     p->thr_idle = 0.05f; p->thr_max = 0.85f; p->drop_max = 0.30f;
+     p->overshoot_m = 0.10f; p->overshoot_vz = 0.40f; p->overshoot_cut = 0.08f;
+     p->height_min = 0.2f; p->height_max = 2.5f;
+@@ -27,7 +27,8 @@
+     p->takeoff_start_frac = 0.82f; p->takeoff_creep_per_s = 0.010f; p->takeoff_fast_per_s = 0.03f; p->takeoff_cap_frac = 1.40f; p->takeoff_fail_s = 3.0f;
+     p->land_rate = 0.16f; p->land_slow_rate = 0.07f; p->land_slow_below = 0.15f;
+     p->touch_m = 0.07f; p->touch_s = 0.30f; p->idle_ramp_per_s = 1.5f; p->takeoff_ramp_per_s = 0.35f; p->cap_land_s = 1.5f; p->lift_base_boost = 0.0f; p->takeoff_vz_max = 0.30f; p->takeoff_vz_back = 0.05f; p->takeoff_handover_margin = 0.05f;
+-    p->takeoff_closed = 1.0f;
++    p->takeoff_closed = 0.0f;      /* v4.7.3R: 0 = the v4.6-rev1 open-loop take-off creep (v4.7 / v4.7.2: 1) */
++    p->az_ff_gain = 0.0f;          /* v4.7.3R: 0 = no acceleration feed-forward (the v4.7.1 / v4.7.2 value is 1) */
+ }
+ 
+ void hhEngage(hhState_t *s, const hhParams_t *p, float z, float f0, float vbat)
+@@ -188,7 +189,7 @@
+     if ((z > 0.05f || e > 0.0f) && !sat_hi && !sat_lo) s->integ = clampf_(s->integ + p->ki_z * e * dt, -p->i_max, p->i_max);
+     float f = base + p->kv_z * (vz_ref - vz) + s->integ;
+     /* v4.7.1: acceleration feed-forward while a height change runs (thrust ~ u^2, so du = (f_base - idle) * a / 2g). Bench 2026-11-24: step overshoot 42 -> 21 mm */
+-    if (s->mode == HH_MODE_HOLD && s->trans) f += (s->f_base - p->thr_idle) * s->az_ff / (2.0f * 9.81f);
++    if (s->mode == HH_MODE_HOLD && s->trans) f += p->az_ff_gain * (s->f_base - p->thr_idle) * s->az_ff / (2.0f * 9.81f);
+     if (s->mode == HH_MODE_HOLD) {
+         if (z > 0.05f && (z > s->z_ref + p->overshoot_m || vz > p->overshoot_vz)) {
+             /* v4.4: brake relative to what is actually holding the drone (base + integral), not to the bare base. On the real drone the base is the lift-off throttle in ground effect (~0.65)
+--- /home/htic/Music/DroneForge/firmware/fc_matek_h743/builds/2026-11-24_fc-hybrid-v4.7.2_BUILT_NOT-FLASHED/src/height_hold_core.h	2026-11-24 11:55:40.118756023 +0530
++++ src/height_hold_core.h	2026-11-24 17:05:12.083881267 +0530
+@@ -39,6 +39,7 @@
+     float takeoff_closed;                /* v4.7: > 0.5 = the height hold takes over as soon as the lift-off is detected and the drone is above lift_m; the rest of the climb is the hold's smooth
+                                             trajectory, starting at the drone's climb speed. 0 = v4.6: the open-loop creep climbs to 5 cm below the target (it overshot: real flights 0.6 -> 0.78 m,
+                                             simulation of the drone 0.80 -> 1.08 m, past the 1.0 m ceiling) */
++    float az_ff_gain;                    /* v4.7.3R: scale of the acceleration feed-forward in a height change (0 = off = v4.6-rev1, 1 = v4.7.1 / v4.7.2) */
+ } hhParams_t;
+ 
+ enum { HH_MODE_HOLD = 0, HH_MODE_TAKEOFF = 1, HH_MODE_LAND = 2 };
+--- /home/htic/Music/DroneForge/firmware/fc_matek_h743/builds/2026-11-24_fc-hybrid-v4.7.2_BUILT_NOT-FLASHED/src/xy_hold_core.c	2026-11-24 11:55:40.120923943 +0530
++++ src/xy_hold_core.c	2026-11-24 17:05:12.086837610 +0530
+@@ -6,16 +6,16 @@
+ 
+ void xyDefaults(xyParams_t *p)
+ {
+-    p->kv = 7.0f; p->kp = 6.0f; p->ki = 0.60f; p->max_deg = 4.0f; p->min_z = 0.06f; p->test_z = 0.08f;      /* v4.7: kv 7, kp 6, ki 0.6 (v4.6-rev1: 5 / 2.4 / 0.15). Bench (xy_bench.py, the drone's flow noise + 1 deg level error): max drift 396 -> ~190 mm median */
++    p->kv = 5.0f; p->kp = 2.4f; p->ki = 0.15f; p->max_deg = 4.0f; p->min_z = 0.06f; p->test_z = 0.08f;      /* v4.7.3R: the v4.6-rev1 gains again (v4.7 / v4.7.2 had 7 / 6 / 0.6) */
+     p->test_deg = 2.5f; p->test_s = 0.8f; p->test_min_dv = 0.08f; p->calm_speed = 0.50f; p->calm_s = 0.5f;
+     p->runaway_speed = 1.0f; p->runaway_s = 1.0f; p->runaway_pos = 2.5f;
+     p->skip_test = 1.0f;
+-    p->stick_db = 0.05f; p->brake_speed = 0.15f; p->brake_s = 0.2f; p->aid_max_m = 3.0f; p->climb_trim = 3.0f;      /* climb_trim 3 deg/m: learns ~95 % of a level error in a 7 s climb (bench: worst drift with the VO aid 171 -> 77 mm) */
++    p->stick_db = 2.0f; p->brake_speed = 0.15f; p->brake_s = 0.2f; p->aid_max_m = 3.0f; p->climb_trim = 0.0f;      /* v4.7.3R: stick_db 2.0 = stick-through can never trigger (the stick is +-1.0), as v4.6-rev1; climb_trim 0 = no trim learning in the climb, as v4.6-rev1 (v4.7: 0.05 / 3.0). The VO aid (aid_max_m) is kept */
+ }
+ 
+ void xyStart(xyState_t *s) { memset(s, 0, sizeof(*s)); s->active = true; }
+ /* mode switch back to position hold: a new "stay here" point (displacement and integral cleared); resets runaway latch */
+-void xyReposition(xyState_t *s) { s->p[0] = s->p[1] = 0.0f; s->t_run = 0.0f; s->out[0] = s->out[1] = 0.0f; s->disabled = false; s->braking = false; s->t_brake = 0.0f; }   /* v4.7: the integral (level trim) is KEPT */
++void xyReposition(xyState_t *s) { s->p[0] = s->p[1] = 0.0f; s->t_run = 0.0f; s->out[0] = s->out[1] = 0.0f; s->disabled = false; s->braking = false; s->t_brake = 0.0f; s->i[0] = s->i[1] = 0.0f; }   /* v4.7.3R: clears the integral too, as v4.6-rev1 (v4.7 kept it) */
+ void xyBrakeThenHold(xyState_t *s) { s->braking = true; s->t_brake = 0.0f; s->stick_on = false; s->out[0] = s->out[1] = 0.0f; }
+ void xyStop(xyState_t *s) { s->active = false; s->out[0] = s->out[1] = 0.0f; }
+ 
+@@ -98,7 +98,7 @@
+         s->i[0] += s->p[0] * dt; s->i[1] += s->p[1] * dt;
+         const float lim = p->max_deg / (p->ki > 1e-6f ? p->ki : 1e-6f);
+         s->i[0] = clampf_(s->i[0], -lim, lim); s->i[1] = clampf_(s->i[1], -lim, lim);
+-    } else if (!hold && !in_test && p->ki > 1e-6f) {                 /* v4.7: the climb learns the level trim from the drift speed (kept by the hand-over reposition) */
++    } else if (!hold && !in_test && p->ki > 1e-6f && p->climb_trim > 0.0f) {                 /* v4.7: the climb learns the level trim from the drift speed (kept by the hand-over reposition) */
+         const float lim = p->max_deg / p->ki;
+         s->i[0] = clampf_(s->i[0] + (p->climb_trim / p->ki) * forward * dt, -lim, lim); s->i[1] = clampf_(s->i[1] + (p->climb_trim / p->ki) * right * dt, -lim, lim);
+     }
+@@ -111,7 +111,7 @@
+             out[ax] = -clampf_(p->kv * v[ax], -p->max_deg, p->max_deg);   /* v4.4: full authority (was +-1.5 deg): the real drone drifts ~0.2 m/s^2 after lift-off and +-1.5 deg could not stop it before the runaway guard tripped (2026-11-16, 3 flights); the guard stays the fail-safe */
+             continue;
+         }
+-        const float kp = hold ? p->kp : 0.0f, ki = p->ki;               /* v4.7: the trim (integral) acts in the climb too; the displacement only in the hold */
++        const float kp = hold ? p->kp : 0.0f, ki = hold ? p->ki : 0.0f;   /* v4.7.3R: as v4.6-rev1: kp and ki only in the hold */
+         out[ax] = -sg * (p->kv * v[ax] + kp * s->p[ax] + ki * s->i[ax]);
+         out[ax] = clampf_(out[ax], -p->max_deg, p->max_deg);
+     }

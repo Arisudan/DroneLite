@@ -1,0 +1,26 @@
+diff --git a/src/main/rx/expresslrs_telemetry.c b/src/main/rx/expresslrs_telemetry.c
+index 1d41a4b..74ed7f9 100644
+--- a/src/main/rx/expresslrs_telemetry.c
++++ b/src/main/rx/expresslrs_telemetry.c
+@@ -531,7 +531,7 @@ void initTelemetry(void) {
+   }
+ #endif
+ 
+-#ifdef USE_EKF
++#if defined(USE_EKF) && defined(NIMBUS_SEND_KINEMATIC)
+   if (sensors(SENSOR_ACC) &&
+       telemetryIsSensorEnabled(SENSOR_ALTITUDE | SENSOR_PITCH | SENSOR_ROLL |
+                                SENSOR_HEADING)) {
+diff --git a/src/main/telemetry/crsf.c b/src/main/telemetry/crsf.c
+index 9afe79e..c752570 100644
+--- a/src/main/telemetry/crsf.c
++++ b/src/main/telemetry/crsf.c
+@@ -1244,7 +1244,7 @@ void initCrsfTelemetry(void) {
+ #endif
+   }
+ #endif
+-#if defined(USE_EKF) && !defined(EKF_ONLY)
++#if defined(USE_EKF) && !defined(EKF_ONLY) && defined(NIMBUS_SEND_KINEMATIC)
+   if (sensors(SENSOR_ACC) &&
+       telemetryIsSensorEnabled(SENSOR_ALTITUDE | SENSOR_PITCH | SENSOR_ROLL |
+                                SENSOR_HEADING)) {

@@ -1,0 +1,423 @@
+--- backup_before_fc_flight/height_hold_core.c	2026-11-06 11:32:23.989074156 +0530
++++ /home/htic/droneforge/bf_fixed/repo/src/main/flight/height_hold_core.c	2026-11-06 11:35:13.282312783 +0530
+@@ -1,3 +1,4 @@
++#include <string.h>
+ #include "height_hold_core.h"
+ 
+ static float clampf_(float v, float lo, float hi) { return v < lo ? lo : (v > hi ? hi : v); }
+@@ -5,18 +6,22 @@
+ 
+ void hhDefaults(hhParams_t *p)
+ {
+-    p->kp_z = 0.9923f; p->kv_z = 0.0538f; p->ki_z = 0.01f; p->i_max = 0.078f;
++    p->kp_z = 0.9923f; p->kv_z = 0.0538f; p->ki_z = 0.02f; p->i_max = 0.12f;
+     p->vz_lim = 0.4581f; p->climb_peak_frac = 0.45f; p->descent_peak_frac = 0.45f;
+     p->thr_idle = 0.05f; p->thr_max = 0.81f; p->drop_max = 0.30f;
+     p->overshoot_m = 0.12f; p->overshoot_vz = 0.45f; p->overshoot_cut = 0.08f;
+     p->height_min = 0.2f; p->height_max = 2.5f;
++    p->base_tau = 1.5f; p->lift_m = 0.15f;
++    p->takeoff_start_frac = 0.88f; p->takeoff_creep_per_s = 0.012f; p->takeoff_cap_frac = 1.20f; p->takeoff_fail_s = 3.0f;
++    p->land_rate = 0.12f; p->land_slow_rate = 0.06f; p->land_slow_below = 0.30f;
++    p->touch_m = 0.07f; p->touch_s = 0.4f; p->idle_ramp_per_s = 1.0f;
+ }
+ 
+ void hhEngage(hhState_t *s, const hhParams_t *p, float z, float f0, float vbat)
+ {
+-    s->active = true; s->t = 0.0f;
+-    s->z_ref = z; s->target = z; s->vz_ff = 0.0f; s->trans = false;
+-    s->integ = 0.0f; s->overshoot = false;
++    memset(s, 0, sizeof(*s));
++    s->active = true; s->mode = HH_MODE_HOLD;
++    s->z_ref = z; s->target = z;
+     s->f_base = clampf_(f0, p->thr_idle, p->thr_max);
+     s->v0 = vbat > 6.0f ? vbat : 6.0f;
+     s->f_out = s->f_base;
+@@ -24,9 +29,22 @@
+ 
+ void hhDisengage(hhState_t *s) { s->active = false; s->trans = false; s->vz_ff = 0.0f; }
+ 
++void hhTakeoffBegin(hhState_t *s, const hhParams_t *p, float f_hover, float target, float vbat)
++{
++    memset(s, 0, sizeof(*s));
++    s->active = true; s->mode = HH_MODE_TAKEOFF;
++    s->f_base = clampf_(f_hover, p->thr_idle, p->thr_max);
++    s->v0 = vbat > 6.0f ? vbat : 6.0f;
++    s->f_cur = clampf_(p->takeoff_start_frac * s->f_base, p->thr_idle, p->thr_max);
++    s->target_pending = clampf_(target, p->height_min, p->height_max);
++    s->f_out = s->f_cur;
++}
++
+ void hhSetTarget(hhState_t *s, const hhParams_t *p, float h)
+ {
+     h = clampf_(h, p->height_min, p->height_max);
++    if (s->mode == HH_MODE_TAKEOFF) { s->target_pending = h; return; }
++    if (s->mode == HH_MODE_LAND) return;
+     if (absf_(h - s->target) < 0.02f) return;                  /* ignore RC quantisation jitter */
+     s->target = h;
+     const float dz = absf_(h - s->z_ref);
+@@ -36,10 +54,55 @@
+     s->trans = true; s->t_start = s->t; s->t_dur = T; s->z_from = s->z_ref; s->z_to = h;
+ }
+ 
++void hhLand(hhState_t *s, const hhParams_t *p)
++{
++    (void)p;
++    if (!s->active || s->mode == HH_MODE_LAND) return;
++    if (s->mode == HH_MODE_TAKEOFF) { s->f_out = s->f_cur; }
++    s->mode = HH_MODE_LAND; s->t_mode = 0.0f; s->t_touch = 0.0f; s->trans = false; s->landed = false;
++}
++
++void hhFollowBase(hhState_t *s, const hhParams_t *p, float dt, float f_hover, float vbat)
++{
++    if (!s->active || s->mode != HH_MODE_HOLD || f_hover < 0.2f || f_hover > 0.9f) return;
++    const float a = clampf_(dt / p->base_tau, 0.0f, 1.0f);
++    s->f_base += (clampf_(f_hover, p->thr_idle, p->thr_max) - s->f_base) * a;
++    if (vbat > 6.0f) s->v0 += (vbat - s->v0) * a;              /* the PC's number already is "at this voltage" */
++}
++
+ float hhUpdate(hhState_t *s, const hhParams_t *p, float dt, float z, float vz, float vbat)
+ {
+-    s->t += dt;
+-    if (s->trans) {
++    s->t += dt; s->t_mode += dt;
++    const float vb = vbat > 6.0f ? vbat : s->v0;
++
++    if (s->mode == HH_MODE_TAKEOFF) {
++        const float cap = clampf_(p->takeoff_cap_frac * s->f_base, p->thr_idle, p->thr_max);
++        s->f_cur += p->takeoff_creep_per_s * dt;
++        if (s->f_cur >= cap) { s->f_cur = cap; s->t_cap += dt; if (s->t_cap > p->takeoff_fail_s) s->fail = true; }
++        if (z > p->lift_m) {                                    /* airborne: hand over to the hold, bumpless */
++            float scale = s->v0 / vb; if (scale > 1.6f) scale = 1.6f;
++            const float base = p->thr_idle + (s->f_base - p->thr_idle) * scale;
++            s->mode = HH_MODE_HOLD; s->t_mode = 0.0f; s->z_ref = z; s->vz_ff = 0.0f; s->trans = false; s->overshoot = false;
++            s->integ = clampf_(s->f_cur - base, -p->i_max, p->i_max);
++            s->target = z;
++            hhSetTarget(s, p, s->target_pending);
++        } else {
++            s->f_out = s->f_cur;
++            return s->f_out;
++        }
++    }
++
++    if (s->mode == HH_MODE_LAND) {
++        if (s->landed) {
++            s->f_out -= p->idle_ramp_per_s * dt; if (s->f_out < p->thr_idle) s->f_out = p->thr_idle;
++            return s->f_out;
++        }
++        const float rate = z < p->land_slow_below ? p->land_slow_rate : p->land_rate;
++        s->z_ref -= rate * dt; if (s->z_ref < -0.3f) s->z_ref = -0.3f;
++        s->vz_ff = -rate;
++        if (z < p->touch_m) s->t_touch += dt; else s->t_touch = 0.0f;
++        if (s->t_touch >= p->touch_s) { s->landed = true; return s->f_out; }
++    } else if (s->trans) {
+         float u = clampf_((s->t - s->t_start) / s->t_dur, 0.0f, 1.0f);
+         const float u3 = u * u * u, u4 = u3 * u, u5 = u4 * u, u2 = u * u;
+         s->z_ref = s->z_from + (s->z_to - s->z_from) * (10.0f * u3 - 15.0f * u4 + 6.0f * u5);
+@@ -48,20 +111,26 @@
+     }
+     const float e = s->z_ref - z;
+     const float vz_ref = clampf_(p->kp_z * e + s->vz_ff, -p->vz_lim, p->vz_lim);
+-    if (z > 0.05f) s->integ = clampf_(s->integ + p->ki_z * e * dt, -p->i_max, p->i_max);
+-    const float vb = vbat > 6.0f ? vbat : s->v0;
+-    /* the throttle that balances weight rises as the pack sags: thrust ~ V^2 * u^2  =>  u - idle scales with V0/V */
++    /* thrust ~ V^2 * u^2  =>  u - idle scales with V0/V */
+     float scale = s->v0 / vb;
+     if (scale > 1.6f) scale = 1.6f;
+     const float base = p->thr_idle + (s->f_base - p->thr_idle) * scale;
++    const float f_unsat = base + p->kv_z * (vz_ref - vz) + s->integ;
++    /* integrate only if not saturated against the error (anti wind-up); never on the floor */
++    const bool sat_hi = f_unsat >= p->thr_max && e > 0.0f;
++    const bool sat_lo = f_unsat <= base - p->drop_max && e < 0.0f;
++    /* near the floor the integrator may only grow (so a drone that settled back on the floor can lift again), bounded by i_max */
++    if ((z > 0.05f || e > 0.0f) && !sat_hi && !sat_lo) s->integ = clampf_(s->integ + p->ki_z * e * dt, -p->i_max, p->i_max);
+     float f = base + p->kv_z * (vz_ref - vz) + s->integ;
+-    if (z > 0.05f && (z > s->z_ref + p->overshoot_m || vz > p->overshoot_vz)) {
+-        const float cap = base - p->overshoot_cut;
+-        if (f > cap) f = cap;
+-        if (s->integ > 0.0f) s->integ = 0.0f;
+-        s->overshoot = true;
+-    } else if (z < s->z_ref + p->overshoot_m * 0.5f && vz < p->overshoot_vz * 0.5f) {
+-        s->overshoot = false;
++    if (s->mode == HH_MODE_HOLD) {
++        if (z > 0.05f && (z > s->z_ref + p->overshoot_m || vz > p->overshoot_vz)) {
++            const float cap = base - p->overshoot_cut;
++            if (f > cap) f = cap;
++            if (s->integ > 0.0f) s->integ = 0.0f;
++            s->overshoot = true;
++        } else if (z < s->z_ref + p->overshoot_m * 0.5f && vz < p->overshoot_vz * 0.5f) {
++            s->overshoot = false;
++        }
+     }
+     f = clampf_(f, base - p->drop_max, p->thr_max);
+     s->f_out = f;
+--- backup_before_fc_flight/height_hold_core.h	2026-11-06 11:32:23.989098518 +0530
++++ /home/htic/droneforge/bf_fixed/repo/src/main/flight/height_hold_core.h	2026-11-06 11:34:05.558482620 +0530
+@@ -1,14 +1,15 @@
+ #pragma once
+ /*
+- * FC-side height hold: the pure control law (no Betaflight dependencies, so it is unit-tested on the PC against the flight simulator).
+- * It is the same law as the PC hover controller (nimbus_pc/hover/controller.py, _altitude): height reference on a minimum-jerk curve with a velocity
+- * feed-forward, outer loop kp_z on height, inner loop kv_z on vertical speed, a limited integrator, and an overshoot damper.
++ * FC-side vertical flight: the pure control law (no Betaflight dependencies, so it is unit-tested on the PC against the flight simulator).
++ * Modes: TAKEOFF (throttle creeps up from below hover until the drone is airborne), HOLD (height reference on a minimum-jerk curve with a velocity
++ * feed-forward, outer loop kp_z on height, inner loop kv_z on vertical speed, a bounded integrator, an overshoot damper, a hover base that follows the
++ * PC's live estimate), LAND (reference sinks at a limited rate, touchdown detection, throttle to idle).
+  * All throttle numbers are STICK FRACTIONS 0..1 (the same unit as the PC's "hover throttle 0.70").
+  */
+ #include <stdbool.h>
+ 
+ typedef struct {
+-    float kp_z, kv_z, ki_z, i_max;       /* 0.9923, 0.0538, 0.01, 0.078 (measured profile of this drone) */
++    float kp_z, kv_z, ki_z, i_max;       /* 0.9923, 0.0538, 0.02, 0.12 */
+     float vz_lim;                        /* 0.4581 m/s */
+     float climb_peak_frac, descent_peak_frac;   /* 0.45, 0.45 of vz_lim for height changes */
+     float thr_idle;                      /* 0.05 */
+@@ -16,26 +17,53 @@
+     float drop_max;                      /* the output never goes more than this below the base throttle (0.30) */
+     float overshoot_m, overshoot_vz, overshoot_cut;   /* 0.12 m, 0.45 m/s, 0.08 */
+     float height_min, height_max;        /* 0.2 .. 2.5 m */
++    /* appended (keep the order: the PC simulator mirrors this struct) */
++    float base_tau;                      /* 1.5 s: time constant with which the hover base follows the PC's live hover estimate */
++    float lift_m;                        /* 0.15 m: airborne above this height */
++    float takeoff_start_frac;            /* 0.88: creep starts at this fraction of the hover throttle */
++    float takeoff_creep_per_s;           /* 0.012 throttle fraction per second */
++    float takeoff_cap_frac;              /* 1.20: creep never goes above this fraction of the hover throttle (and never above thr_max) */
++    float takeoff_fail_s;                /* 3.0: at the cap without lifting for this long: fault */
++    float land_rate, land_slow_rate, land_slow_below;   /* 0.12 m/s, 0.06 m/s below 0.30 m */
++    float touch_m, touch_s;              /* 0.07 m for 0.4 s = touched down */
++    float idle_ramp_per_s;               /* 1.0: throttle fraction per second ramped to idle after touchdown */
+ } hhParams_t;
+ 
++enum { HH_MODE_HOLD = 0, HH_MODE_TAKEOFF = 1, HH_MODE_LAND = 2 };
++
+ typedef struct {
+     bool  active;
+     float z_ref, vz_ff;                  /* current height reference (m) and its feed-forward speed (m/s) */
+     float integ;
+-    float f_base, v0;                    /* hover throttle captured at engage and the pack voltage then */
++    float f_base, v0;                    /* hover throttle (at pack voltage v0) */
+     float target;                        /* where the reference is heading (m) */
+     bool  trans;
+     float t_start, t_dur, z_from, z_to;  /* minimum-jerk transition */
+     float t;                             /* own clock (s) */
+     float f_out;                         /* last output */
+     bool  overshoot;
++    /* appended */
++    int   mode;
++    float f_cur;                         /* takeoff creep throttle */
++    float t_mode;                        /* time in the current mode (s) */
++    float t_cap;                         /* time spent at the creep cap (s) */
++    float target_pending;                /* height requested while still on the ground */
++    float t_touch;                       /* time below touch_m while landing (s) */
++    bool  fail;                          /* takeoff did not lift */
++    bool  landed;                        /* touched down, throttle at idle */
+ } hhState_t;
+ 
+ void  hhDefaults(hhParams_t *p);
+-/* start holding: z = current height (m), f0 = throttle the pilot/PC is giving now (bumpless: output starts there), vbat in V */
++/* start holding: z = current height (m), f0 = hover throttle fraction (base), vbat in V */
+ void  hhEngage(hhState_t *s, const hhParams_t *p, float z, float f0, float vbat);
+ void  hhDisengage(hhState_t *s);
+-/* new target height (m), clamped to height_min..height_max; the reference glides there */
++/* start a take-off from the floor: f_hover = the PC's hover reference, target = height to hold after lift-off */
++void  hhTakeoffBegin(hhState_t *s, const hhParams_t *p, float f_hover, float target, float vbat);
++/* new target height (m), clamped to height_min..height_max; the reference glides there (during take-off it is remembered for the lift-off) */
+ void  hhSetTarget(hhState_t *s, const hhParams_t *p, float h);
++/* land from where it is */
++void  hhLand(hhState_t *s, const hhParams_t *p);
++/* the PC's live hover estimate (stick fraction at pack voltage vbat): the base follows it slowly while hovering */
++void  hhFollowBase(hhState_t *s, const hhParams_t *p, float dt, float f_hover, float vbat);
+ /* one control step: dt (s), height z (m), vertical speed vz (m/s), pack voltage; returns the throttle fraction */
+ float hhUpdate(hhState_t *s, const hhParams_t *p, float dt, float z, float vz, float vbat);
+--- backup_before_fc_flight/height_hold.c	2026-11-06 11:32:23.989114390 +0530
++++ /home/htic/droneforge/bf_fixed/repo/src/main/flight/height_hold.c	2026-11-06 11:35:33.128725475 +0530
+@@ -1,6 +1,7 @@
+ #include <math.h>
+ #include <stdbool.h>
+ #include <stdint.h>
++#include <stdlib.h>
+ 
+ #include "platform.h"
+ 
+@@ -11,6 +12,7 @@
+ #include "drivers/time.h"
+ 
+ #include "fc/rc.h"
++#include "flight/imu.h"
+ #include "fc/rc_controls.h"
+ #include "fc/rc_modes.h"
+ #include "fc/runtime_config.h"
+@@ -28,6 +30,9 @@
+ #define HH_RC_BASE_CHANNEL   9       /* rcData[9] = CH10: the PC's hover-reference throttle (same scale as the throttle channel); below 1100 us = not provided */
+ #define HH_US_OFF            1100
+ #define HH_US_TARGET_START   1150
++#define HH_US_LAND           1960    /* CH9 at or above this = LAND (FC lands by itself) */
++#define HH_MAX_TILT_DECI     350     /* take-off aborts above 35 deg of roll/pitch */
++#define HH_TAKEOFF_MAX_THR_US 1300   /* the PC sends zero throttle while it asks for an FC take-off */
+ #define HH_MAX_RANGE_AGE_US  250000  /* the range sample must be fresher than this, or the hold lets go */
+ #define HH_MIN_AIRBORNE_M    0.15f
+ #define HH_GROUND_LEARN_US   1300    /* the ground offset is learned while armed with the throttle stick below this (still on the floor) */
+@@ -37,6 +42,7 @@
+ static hhParams_t hhParams;
+ static hhState_t hhState;
+ static bool hhFault = false;
++static bool hhLandLatch = false;   /* landed: no new take-off until the land command / the hold request goes away */
+ static int16_t hhRcThrottle = 1000;
+ static float groundZ = 0.0f;
+ static uint16_t groundN = 0;
+@@ -64,6 +70,7 @@
+     return (st->posZ - groundZ) < HH_GROUND_HOLD_M;
+ }
+ bool heightHoldHasFault(void) { return hhFault; }
++int heightHoldMode(void) { return hhState.active ? hhState.mode : -1; }
+ int16_t heightHoldRcCommandThrottle(void) { return hhRcThrottle; }
+ 
+ static float throttleFractionFromUs(float us)    /* the PC's throttle01 -> CRSF mapping, inverted: us = 5*ticks/8 + 880, ticks = 172 + f*1639 */
+@@ -97,6 +104,8 @@
+     const uint16_t chUs = rcData[HH_RC_CHANNEL];
+     const bool requested = IS_RC_MODE_ACTIVE(BOXUSER1) && chUs >= HH_US_OFF;
+ 
++    const bool landCmd = requested && chUs >= HH_US_LAND;
++    if (!requested || !armed || !landCmd) hhLandLatch = hhLandLatch && requested && armed && landCmd;
+     if (!requested) { hhFault = false; if (hhState.active) release(false); }
+ 
+     /* learn the ground offset while armed on the floor (never while holding) */
+@@ -109,16 +118,23 @@
+     lastRunUs = currentTimeUs;
+ 
+     if (!hhState.active) {
+-        if (!(requested && !hhFault && armed && !FLIGHT_MODE(FAILSAFE_MODE) && finite && rangeFresh && groundN >= 20)) return;
++        if (!(requested && !hhFault && !hhLandLatch && !landCmd && armed && !FLIGHT_MODE(FAILSAFE_MODE) && finite && rangeFresh && groundN >= 20)) return;
+         const float zr = z - groundZ;
+-        if (zr < HH_MIN_AIRBORNE_M || fabsf(vz) > 0.5f) return;                  /* wait until the drone is airborne and settled */
+-        float base = throttleFractionFromUs((float)rcData[THROTTLE]);            /* fallback: the throttle the PC is sending now */
+-        if (rcData[HH_RC_BASE_CHANNEL] >= HH_US_OFF) {
++        const bool hoverRefOk = rcData[HH_RC_BASE_CHANNEL] >= HH_US_OFF && throttleFractionFromUs((float)rcData[HH_RC_BASE_CHANNEL]) > 0.2f && throttleFractionFromUs((float)rcData[HH_RC_BASE_CHANNEL]) < 0.9f;
++        if (zr < HH_MIN_AIRBORNE_M) {
++            /* on the floor with a real target (>= 1150 us) and a valid hover reference: FC take-off. Level, still, stick at minimum. */
++            if (chUs < HH_US_TARGET_START || !hoverRefOk || rcData[THROTTLE] >= HH_TAKEOFF_MAX_THR_US || fabsf(vz) > 0.15f) return;
++            if (abs(attitude.values.roll) > 100 || abs(attitude.values.pitch) > 100) return;      /* must be level (10 deg) to start */
+             const float b = throttleFractionFromUs((float)rcData[HH_RC_BASE_CHANNEL]);
+-            if (b > 0.2f && b < 0.9f) base = b;                                  /* the PC's hover reference: no climb feed-forward in it, so the integrator starts near zero */
++            hhTakeoffBegin(&hhState, &hhParams, b, ((float)chUs - (float)HH_US_TARGET_START) * 2.5f / 800.0f, getBatteryVoltageLatest() * 0.01f);
++            hhRcThrottle = rcCommandFromFraction(hhState.f_cur);
++        } else {
++            if (fabsf(vz) > 0.5f) return;                                          /* already airborne (PC lifted off): wait until settled */
++            float base = throttleFractionFromUs((float)rcData[THROTTLE]);          /* fallback: the throttle the PC is sending now */
++            if (hoverRefOk) base = throttleFractionFromUs((float)rcData[HH_RC_BASE_CHANNEL]);
++            hhEngage(&hhState, &hhParams, zr, base, getBatteryVoltageLatest() * 0.01f);
++            hhRcThrottle = rcCommand[THROTTLE];
+         }
+-        hhEngage(&hhState, &hhParams, zr, base, getBatteryVoltageLatest() * 0.01f);
+-        hhRcThrottle = rcCommand[THROTTLE];
+     }
+ 
+     /* active: let go on anything suspicious (the PC then takes the throttle back and lands) */
+@@ -127,10 +143,15 @@
+         release(true);
+         return;
+     }
+-    if (chUs >= HH_US_TARGET_START) {
+-        hhSetTarget(&hhState, &hhParams, ((float)chUs - (float)HH_US_TARGET_START) * 2.5f / 800.0f);
+-    }
+-    const float f = hhUpdate(&hhState, &hhParams, constrainf(dt, 0.005f, 0.1f), zr, vz, getBatteryVoltageLatest() * 0.01f);
++    if (hhState.mode == HH_MODE_TAKEOFF && (abs(attitude.values.roll) > HH_MAX_TILT_DECI || abs(attitude.values.pitch) > HH_MAX_TILT_DECI)) { release(true); return; }
++    if (landCmd) hhLand(&hhState, &hhParams);
++    else if (chUs >= HH_US_TARGET_START) hhSetTarget(&hhState, &hhParams, ((float)chUs - (float)HH_US_TARGET_START) * 2.5f / 800.0f);
++    const float dtc = constrainf(dt, 0.005f, 0.1f);
++    const float vbat = getBatteryVoltageLatest() * 0.01f;
++    if (rcData[HH_RC_BASE_CHANNEL] >= HH_US_OFF && fabsf(vz) < 0.3f) hhFollowBase(&hhState, &hhParams, dtc, throttleFractionFromUs((float)rcData[HH_RC_BASE_CHANNEL]), vbat);
++    const float f = hhUpdate(&hhState, &hhParams, dtc, zr, vz, vbat);
++    if (hhState.fail) { release(true); return; }                              /* take-off never lifted: the PC takes over and disarms */
++    if (hhState.landed && f <= hhParams.thr_idle + 0.001f) { release(false); hhLandLatch = true; return; }
+     hhRcThrottle = rcCommandFromFraction(f);
+ }
+ 
+--- backup_before_fc_flight/height_hold.h	2026-11-06 11:32:23.989135951 +0530
++++ /home/htic/droneforge/bf_fixed/repo/src/main/flight/height_hold.h	2026-11-06 11:32:41.274414095 +0530
+@@ -8,11 +8,14 @@
+  *   below 1100 us          hold OFF  (the throttle is the pilot's / the PC's, as always)
+  *   1100..1149 us          hold ON at the current height
+  *   1150..1950 us          hold ON at (us - 1150) * 2.5 / 800 metres (0..2.5 m; the core limits it to 0.2..2.5 m)
++ *   1960..2000 us          LAND (descend at <=0.12 m/s, touch down, throttle to idle; the PC then disarms)
++ *   FC take-off: while still on the floor, a target >= 1150 us plus a valid hover reference on CH10 starts a creep (level, throttle stick at minimum)
+  * Mode activation: BOXUSER1 ("USER1") on AUX5 above 1100 us:  aux <n> 40 4 8 48 0 0
+  * Height = EKF height (range sensor) minus the sensor's ground offset learned while armed on the ground. */
+ void heightHoldInit(void);
+ void heightHoldUpdate(timeUs_t currentTimeUs);   /* called at the range-sensor rate (50 Hz), right after the range sample was fused into the EKF */
+ bool heightHoldIsActive(void);
+ bool heightHoldHasFault(void);
++int heightHoldMode(void);                        /* -1 off, 0 hold, 1 take-off, 2 landing */
+ bool heightHoldOnGround(void);                   /* armed on the floor: the PID integrator must stay at zero */
+ int16_t heightHoldRcCommandThrottle(void);       /* what rcCommand[THROTTLE] would be for the hold's throttle */
+--- backup_before_fc_flight/kinematic_estimator.c	2026-11-06 11:32:23.989152318 +0530
++++ /home/htic/droneforge/bf_fixed/repo/src/main/flight/kinematic_estimator.c	2026-11-06 11:32:59.138581756 +0530
+@@ -31,6 +31,7 @@
+ #include "fc/runtime_config.h"
+ 
+ #include "sensors/acceleration.h"
++#include "sensors/gyro.h"
+ #include "sensors/sensors.h"
+ 
+ #define METERS_PER_SECOND_SQUARED_PER_G 9.80665f
+@@ -511,6 +512,20 @@
+ #endif
+ 
+   const float altitudeCm = (float)rangefinderMeasurement->calculatedAltitudeCm;
++  /* Rotation compensation: the MTF-02P flow (cm/s at 1 m = rad/s * 100) contains the sensor's own rotation. The linear speed is
++   * (flow_rad_s - K * gyro_rad_s) * height. K is 0 (off) until the sign is proven on the bench with NIMBUS_FLOW_GYRO_KX/KY = +1 or -1.
++   * forward flow (velX) <-> pitch rate (gyro Y), right flow (velY) <-> roll rate (gyro X). */
++  float flowX = (float)opticalflowMeasurement->velX, flowY = (float)opticalflowMeasurement->velY;
++#if defined(NIMBUS_FLOW_GYRO_KX) || defined(NIMBUS_FLOW_GYRO_KY)
++#ifndef NIMBUS_FLOW_GYRO_KX
++#define NIMBUS_FLOW_GYRO_KX 0.0f
++#endif
++#ifndef NIMBUS_FLOW_GYRO_KY
++#define NIMBUS_FLOW_GYRO_KY 0.0f
++#endif
++  flowX -= NIMBUS_FLOW_GYRO_KX * 100.0f * DEGREES_TO_RADIANS * gyro.gyroADCf[FD_PITCH];
++  flowY -= NIMBUS_FLOW_GYRO_KY * 100.0f * DEGREES_TO_RADIANS * gyro.gyroADCf[FD_ROLL];
++#endif
+   const float opticalflowVarianceScale =
+       kinematicEstimatorGetOpticalflowVarianceScale(opticalflowMeasurement,
+                                                     rangefinderMeasurement);
+@@ -518,9 +533,9 @@
+   kinematicFilterUpdateFlowVelocity(
+       &kinematicEstimator,
+       kinematicEstimatorOpticalflowToMetersPerSecond(
+-          (float)opticalflowMeasurement->velX, altitudeCm),
++          flowX, altitudeCm),
+       kinematicEstimatorOpticalflowToMetersPerSecond(
+-          (float)opticalflowMeasurement->velY, altitudeCm),
++          flowY, altitudeCm),
+       attitudeQuat, opticalflowVarianceScale);
+ }
+ 
+@@ -543,6 +558,15 @@
+   }
+ #endif
+ 
++  /* spike gate: a sample far from the filter's height is rejected, but never more than 5 in a row (so a real fast change cannot lock the filter out) */
++  {
++    static uint8_t rejected = 0;
++    const float zm = kinematicEstimatorCentimetersToMeters((float)rangefinderMeasurement->calculatedAltitudeCm);
++    const float zf = kinematicEstimator.state.posZ;
++    if (kinematicEstimatorLastRangeUs != 0 && isfinite(zf) && fabsf(zm - zf) > 0.40f && rejected < 5) { rejected++; return; }
++    rejected = 0;
++  }
++
+   const float rangefinderVarianceScale =
+       kinematicEstimatorGetRangefinderVarianceScale(rangefinderMeasurement);
+ 
+--- backup_before_fc_flight/crsf.c	2026-11-06 11:32:23.989174744 +0530
++++ /home/htic/droneforge/bf_fixed/repo/src/main/telemetry/crsf.c	2026-11-06 11:32:41.274561158 +0530
+@@ -573,7 +573,8 @@
+   sbufWriteString(dst, flightMode);
+ #ifdef USE_EKF
+   if (heightHoldIsActive()) {
+-    sbufWriteString(dst, " HH");
++    const int hhm = heightHoldMode();
++    sbufWriteString(dst, hhm == 1 ? " HT" : (hhm == 2 ? " HL" : " HH"));
+   } else if (heightHoldHasFault()) {
+     sbufWriteString(dst, " HF");
+   }

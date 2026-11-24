@@ -1,0 +1,16 @@
+# DJI O4 camera as mounted on our drone: forward, LEVEL (no up/down tilt), centred on the body axis, 6.5 cm ahead of and 2.5 cm above the body centre.
+# Nominal field of view from DJI's listings (https://www.adorama.com/alc/dji-o4-air-unit-and-dji-o4-air-unit-pro): diagonal FOV; the real image is wide and distorted.
+# DA3 (as used by Nimbus) expects a rectified pinhole picture with the Nimbus Air75 profile (fx 292.3 px at 640 px width, about 96 deg horizontal), so the real
+# feed is undistorted and cropped to that profile first (nimbus_core/rectify.py). UNVERIFIED: the real calibration (K, distortion) of YOUR O4: measure it with a checkerboard
+# and put it under `calibration`; until then the rectifier assumes an ideal lens of the nominal FOV.
+variant: pro                 # standard | pro | wide   (the owner has the O4 Pro camera with its Air Unit)
+variants:
+  standard: {diagonal_fov_deg: 117.6, sensor: "1/2 inch",   lens: rectilinear}
+  pro:      {diagonal_fov_deg: 155.0, sensor: "1/1.3 inch", lens: equidistant}   # near-fisheye: r = f * theta
+  wide:     {diagonal_fov_deg: 159.0, sensor: "1/2 inch",   lens: equidistant}
+# NOTE: DJI quotes 155 deg as the diagonal FOV at the full sensor (4:3). The CosmoStreamer picture is 16:9 (1280x720), a crop of it, so its real FOV is smaller
+# than the nominal one: measure it (checkerboard) before trusting the numbers below.
+stream: {width: 1280, height: 720}      # CosmoStreamer RTSP
+mount: {x: 0.065, y: 0.0, z: 0.025, roll_deg: 0.0, pitch_deg: 0.0, yaw_deg: 0.0}
+calibration: null                       # {fx:, fy:, cx:, cy:, dist: [k1, k2, p1, p2, k3]}  from a checkerboard calibration
+nimbus_profile: {width: 640, height: 480, fx: 292.2957, fy: 292.2957}

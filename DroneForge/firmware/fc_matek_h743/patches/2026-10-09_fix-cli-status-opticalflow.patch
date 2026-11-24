@@ -1,0 +1,78 @@
+diff --git a/src/main/build/debug.c b/src/main/build/debug.c
+index 30bd2d7..646a91d 100644
+--- a/src/main/build/debug.c
++++ b/src/main/build/debug.c
+@@ -117,4 +117,5 @@ const char * const debugModeNames[DEBUG_COUNT] = {
+     "MAG_CALIB",
+     "MAG_TASK_RATE",
+     "EZLANDING",
++    "OPTICALFLOW",
+ };
+diff --git a/src/main/cli/cli.c b/src/main/cli/cli.c
+index fbf1a84..965f605 100644
+--- a/src/main/cli/cli.c
++++ b/src/main/cli/cli.c
+@@ -4803,8 +4803,11 @@ static void cliStatus(const char *cmdName, char *cmdline)
+         }
+         const uint32_t mask = (1 << i);
+         if ((detectedSensorsMask & mask) && (mask & SENSOR_NAMES_MASK)) {
+-            const uint8_t sensorHardwareIndex = detectedSensors[i];
+-            const char *sensorHardware = sensorHardwareNames[i][sensorHardwareIndex];
++            // The sensor mask bit (i) is not the same as the sensor table index for
++            // OPTICALFLOW (bit 7, index SENSOR_INDEX_OPTICALFLOW); using i read past the tables.
++            const uint32_t sensorTableIndex = (mask == SENSOR_OPTICALFLOW) ? SENSOR_INDEX_OPTICALFLOW : i;
++            const uint8_t sensorHardwareIndex = detectedSensors[sensorTableIndex];
++            const char *sensorHardware = sensorHardwareNames[sensorTableIndex][sensorHardwareIndex];
+             if (i) {
+                 cliPrint(", ");
+             }
+diff --git a/src/main/drivers/optrange/optrange_mtf.c b/src/main/drivers/optrange/optrange_mtf.c
+index 48861ec..6a9bb0f 100644
+--- a/src/main/drivers/optrange/optrange_mtf.c
++++ b/src/main/drivers/optrange/optrange_mtf.c
+@@ -82,6 +82,8 @@ static uint8_t mtfFlowQuality;
+ static uint8_t mtfFlowStatus;
+ 
+ static uint16_t mtferrors = 0;
++static uint32_t mtfBytesRx = 0;
++static uint16_t mtfFramesOk = 0;
+ 
+ void mtfInit(optrangeDev_t *dev) {
+   UNUSED(dev);
+@@ -108,6 +110,7 @@ void mtfUpdate(optrangeDev_t *dev) {
+ 
+   while (serialRxBytesWaiting(mtfSerialPort)) {
+     uint8_t c = serialRead(mtfSerialPort);
++    mtfBytesRx++;
+ 
+     switch (mtfFrameState) {
+     case MTF_FRAME_STATE_WAIT_START:
+@@ -189,6 +192,7 @@ void mtfUpdate(optrangeDev_t *dev) {
+         }
+ 
+         lastFrameReceivedMs = timeNowMs;
++        mtfFramesOk++;
+       } else {
+         mtferrors++;
+       }
+@@ -205,9 +209,18 @@ void mtfUpdate(optrangeDev_t *dev) {
+     }
+   }
+ 
+-  if (timeNowMs - lastFrameReceivedMs > MTF_TIMEOUT_MS) {
+-    // who cares?
++  // The sensor boots in MSP mode and can miss the one-time switch command sent from
++  // mtfDetect if it is not ready yet. Until a valid Micolink frame has been seen, resend it every second.
++  static timeMs_t lastSwitchCmdMs = 0;
++  if (timeNowMs - lastFrameReceivedMs > 1000 && timeNowMs - lastSwitchCmdMs > 1000) {
++    serialWriteBuf(mtfSerialPort, MTF_SET_MICOLINK_PROTOCOL_SEQUENCE,
++                   MTF_SET_MICOLINK_PROTOCOL_LENGTH);
++    lastSwitchCmdMs = timeNowMs;
+   }
++
++  // debug (debug_mode = OPTICALFLOW): [0] bytes received (low 16 bits), [3] frames ok (high byte) | checksum errors (low byte)
++  DEBUG_SET(DEBUG_OPTICALFLOW, 0, (int16_t)(mtfBytesRx & 0xFFFF));
++  DEBUG_SET(DEBUG_OPTICALFLOW, 3, (int16_t)(((mtfFramesOk & 0xFF) << 8) | (mtferrors & 0xFF)));
+ }
+ 
+ optrangeRangefinderData_t mtfGetRangefinderData(optrangeDev_t *dev) {

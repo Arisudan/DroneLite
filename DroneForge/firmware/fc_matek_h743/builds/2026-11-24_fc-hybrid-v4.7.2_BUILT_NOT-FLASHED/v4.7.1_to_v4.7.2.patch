@@ -1,0 +1,38 @@
+--- height_hold.c	2026-11-24 11:03:13.551578514 +0530
++++ /home/htic/Music/DroneForge/firmware/fc_matek_h743/builds/2026-11-24_fc-hybrid-v4.7.2_BUILT_NOT-FLASHED/src/height_hold.c	2026-11-24 11:55:40.119588437 +0530
+@@ -72,6 +72,25 @@
+ static bool aidValid = false;
+ static timeUs_t aidUs = 0;
+ 
++/* v4.7.2: the same aid on RC channels (2026-11-24): MSP over ELRS delivered ~1 write in 10 (bench), so the aid was almost always older than HH_AID_MAX_AGE_US.
++ * RC channels ride in every ELRS packet. Needs a full-resolution ELRS packet rate ("100Hz Full": 10-bit, ~1 us); the switch modes (Wide/Hybrid) send CH13+ not at all
++ * and CH6-12 in 15 us steps. CH13 = forward, CH14 = right: 1500 us = 0, 1 us = 1 mm, valid 1100..1900 us (+-0.40 m); CH15 > 1900 us = the PC says the aid is valid.
++ * An unset channel (1500 us or the minimum) never counts as an aid. Ignored without an RC signal and in failsafe (failsafe HOLDS the AUX channels at their last value). */
++#define HH_RC_AID_FWD_CH     12      /* rcData[12] = CH13 = AUX9  */
++#define HH_RC_AID_RIGHT_CH   13      /* rcData[13] = CH14 = AUX10 */
++#define HH_RC_AID_FLAG_CH    14      /* rcData[14] = CH15 = AUX11 */
++#define HH_RC_AID_FLAG_US    1900.0f
++#define HH_RC_AID_MIN_US     1100.0f
++#define HH_RC_AID_MAX_US     1900.0f
++
++static void hhReadRcAid(timeUs_t now)
++{
++    if (!rxIsReceivingSignal() || FLIGHT_MODE(FAILSAFE_MODE) || rcData[HH_RC_AID_FLAG_CH] <= HH_RC_AID_FLAG_US) return;
++    const float f = rcData[HH_RC_AID_FWD_CH], r = rcData[HH_RC_AID_RIGHT_CH];
++    if (f < HH_RC_AID_MIN_US || f > HH_RC_AID_MAX_US || r < HH_RC_AID_MIN_US || r > HH_RC_AID_MAX_US) return;
++    aidFwd = (f - 1500.0f) * 0.001f; aidRight = (r - 1500.0f) * 0.001f; aidValid = true; aidUs = now;
++}
++
+ void heightHoldSetPosAid(int16_t fwdMm, int16_t rightMm, bool valid)
+ {
+     aidFwd = fwdMm * 0.001f; aidRight = rightMm * 0.001f; aidValid = valid; aidUs = micros();
+@@ -230,7 +249,8 @@
+     }
+     hhLastMode = hhState.mode;
+     if (!xyPaused && kinematicEstimatorGetBodyVelocity(&fwd, &rgt) && hhState.active) {
+-        /* v4.7 ST: the RC sticks (rcCommand +-500: roll right +, pitch forward +) and the PC's position aid while fresh */
++        /* v4.7 ST: the RC sticks (rcCommand +-500: roll right +, pitch forward +) and the PC's position aid while fresh (v4.7.2: from RC channels or MSP) */
++        hhReadRcAid(currentTimeUs);
+         const bool aidFresh = aidValid && aidUs && cmpTimeUs(currentTimeUs, aidUs) < HH_AID_MAX_AGE_US;
+         xyUpdateST(&xyState, &xyParams, dtc, fwd, rgt, hhCorrectHeight(zr), hhState.mode == HH_MODE_HOLD, rcCommand[PITCH] / 500.0f, rcCommand[ROLL] / 500.0f,
+                    aidFresh, aidFwd, aidRight, &rollDeg, &pitchDeg);

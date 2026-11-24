@@ -1,0 +1,61 @@
+diff --git a/src/main/rx/crsf_protocol.h b/src/main/rx/crsf_protocol.h
+index ea9d6b7..0c218cc 100644
+--- a/src/main/rx/crsf_protocol.h
++++ b/src/main/rx/crsf_protocol.h
+@@ -112,9 +112,9 @@ enum {
+     CRSF_FRAME_ATTITUDE_PAYLOAD_SIZE = 6,
+     CRSF_FRAME_DEVICE_PING_PAYLOAD_SIZE = 2,
+     CRSF_FRAME_RANGEFINDER_TF_PAYLOAD_SIZE = 4,
+-    CRSF_FRAME_OPTRANGE_PAYLOAD_SIZE = 10,
++    CRSF_FRAME_OPTRANGE_PAYLOAD_SIZE = 12, // [dest 0x00][origin 0xC8] + 10 data bytes
+     CRSF_FRAME_RAW_IMU_PAYLOAD_SIZE = 12,
+-    CRSF_FRAME_KINEMATIC_STATE_PAYLOAD_SIZE = 18, // pos xyz, vel xyz, attitude rpy
++    CRSF_FRAME_KINEMATIC_STATE_PAYLOAD_SIZE = 20, // [dest][origin] + pos xyz, vel xyz, attitude rpy
+ #ifdef USE_DSHOT_TELEMETRY
+     CRSF_FRAME_MOTOR_RPM_PAYLOAD_SIZE = 13, // with telemetry: 1 pole + 4*(1 pwm + 2 erpm)
+ #else
+diff --git a/src/main/rx/expresslrs_telemetry.c b/src/main/rx/expresslrs_telemetry.c
+index 1d41a4b..74ed7f9 100644
+--- a/src/main/rx/expresslrs_telemetry.c
++++ b/src/main/rx/expresslrs_telemetry.c
+@@ -531,7 +531,7 @@ void initTelemetry(void) {
+   }
+ #endif
+ 
+-#ifdef USE_EKF
++#if defined(USE_EKF) && defined(NIMBUS_SEND_KINEMATIC)
+   if (sensors(SENSOR_ACC) &&
+       telemetryIsSensorEnabled(SENSOR_ALTITUDE | SENSOR_PITCH | SENSOR_ROLL |
+                                SENSOR_HEADING)) {
+diff --git a/src/main/telemetry/crsf.c b/src/main/telemetry/crsf.c
+index 9afe79e..bffb81e 100644
+--- a/src/main/telemetry/crsf.c
++++ b/src/main/telemetry/crsf.c
+@@ -507,6 +507,8 @@ static void crsfFrameKinematicState(sbuf_t *dst) {
+   sbufWriteU8(dst, CRSF_FRAME_KINEMATIC_STATE_PAYLOAD_SIZE +
+                        CRSF_FRAME_LENGTH_TYPE_CRC);
+   sbufWriteU8(dst, CRSF_FRAMETYPE_KINEMATIC_STATE);
++  sbufWriteU8(dst, CRSF_ADDRESS_BROADCAST);          // [dest][origin] prefix, see the OPTRANGE frame
++  sbufWriteU8(dst, CRSF_ADDRESS_FLIGHT_CONTROLLER);
+ 
+   sbufWriteU16BigEndian(dst, (uint16_t)crsfMetersToMillimeters(state->posX));
+   sbufWriteU16BigEndian(dst, (uint16_t)crsfMetersToMillimeters(state->posY));
+@@ -828,6 +830,9 @@ static void crsfFrameOpticalflowRangefinder(sbuf_t *dst) {
+   sbufWriteU8(dst,
+               CRSF_FRAME_OPTRANGE_PAYLOAD_SIZE + CRSF_FRAME_LENGTH_TYPE_CRC);
+   sbufWriteU8(dst, CRSF_FRAMETYPE_OPTRANGE);
++  // ELRS 4.x reads custom types >= 0x28 as addressed frames: [dest][origin] first, so data bytes are never mistaken for addresses
++  sbufWriteU8(dst, CRSF_ADDRESS_BROADCAST);
++  sbufWriteU8(dst, CRSF_ADDRESS_FLIGHT_CONTROLLER);
+ 
+   const int32_t distValueCm = rangefinderGetLatestAltitude();
+   const int32_t distValueMm = (distValueCm >= 0) ? (distValueCm * 10) : distValueCm;
+@@ -1244,7 +1249,7 @@ void initCrsfTelemetry(void) {
+ #endif
+   }
+ #endif
+-#if defined(USE_EKF) && !defined(EKF_ONLY)
++#if defined(USE_EKF) && !defined(EKF_ONLY) && defined(NIMBUS_SEND_KINEMATIC)
+   if (sensors(SENSOR_ACC) &&
+       telemetryIsSensorEnabled(SENSOR_ALTITUDE | SENSOR_PITCH | SENSOR_ROLL |
+                                SENSOR_HEADING)) {

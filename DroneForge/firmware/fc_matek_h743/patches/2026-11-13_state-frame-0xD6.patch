@@ -1,0 +1,168 @@
+--- a/src/main/telemetry/crsf.c
++++ b/src/main/telemetry/crsf.c
+@@ -58,6 +58,7 @@
+ #ifdef USE_EKF
+ #include "flight/height_hold.h"
+ #include "flight/kinematic_estimator.h"
++#include "telemetry/crsf_state_pack.h"
+ #endif
+ #include "flight/mixer.h"
+ #include "flight/position.h"
+@@ -894,6 +895,32 @@
+ }
+ #endif
+ 
++#if defined(USE_EKF) && defined(USE_RANGEFINDER_OPTFLOW_MTF) && defined(NIMBUS_SEND_STATE)
++/*
++0xD6 Compact state: range + optical flow + EKF velocity + attitude in one frame (replaces 0xD3 + 0xD4 + 0x1E on the air: 26 bytes instead of 50).
++Layout and units: telemetry/crsf_state_pack.h (same units as D3 and D4, position is NOT sent).
++*/
++static void crsfFrameState(sbuf_t *dst) {
++  const kinematicState_t *state = kinematicEstimatorGetState();
++  const int32_t distValueCm = rangefinderGetLatestAltitude();
++  const int32_t distValueMm = (distValueCm >= 0) ? (distValueCm * 10) : distValueCm;
++  const uint16_t distRaw = (distValueMm >= 0) ? (uint16_t)constrain(distValueMm, 0, 65535) : UINT16_MAX;
++  const bool ekfValid = isfinite(state->velX) && isfinite(state->velY) && isfinite(state->velZ);
++  uint8_t data[CRSF_STATE_PAYLOAD_BYTES];
++
++  const uint8_t n = crsfStatePack(data, distRaw, opticalflowGetLatestVelX(), opticalflowGetLatestVelY(), opticalflowGetLatestFlowQuality(), ekfValid,
++                                  opticalflowGetLatestFlowStatus(), crsfMetersPerSecondToMillimetersPerSecond(state->velX),
++                                  crsfMetersPerSecondToMillimetersPerSecond(state->velY), crsfMetersPerSecondToMillimetersPerSecond(state->velZ),
++                                  decidegrees2Radians10000(attitude.values.roll), decidegrees2Radians10000(attitude.values.pitch),
++                                  decidegrees2Radians10000(attitude.values.yaw));
++  sbufWriteU8(dst, CRSF_FRAME_STATE_PAYLOAD_SIZE + CRSF_FRAME_LENGTH_TYPE_CRC);
++  sbufWriteU8(dst, CRSF_FRAMETYPE_STATE);
++  for (uint8_t i = 0; i < n; i++) {
++    sbufWriteU8(dst, data[i]);
++  }
++}
++#endif
++
+ #if defined(USE_MAG) && defined(SEND_MAG_TELEMETRY)
+ static void crsfFrameMagnetometer(sbuf_t *dst) {
+   sbufWriteU8(dst, CRSF_FRAME_MAGNETOMETER_PAYLOAD_SIZE +
+@@ -959,6 +986,9 @@
+   CRSF_FRAME_HEARTBEAT_INDEX,
+   CRSF_FRAME_RANGEFINDER_TF_INDEX,
+   CRSF_FRAME_OPTRANGE_INDEX,
++#if defined(USE_EKF) && defined(USE_RANGEFINDER_OPTFLOW_MTF) && defined(NIMBUS_SEND_STATE)
++  CRSF_FRAME_STATE_INDEX,
++#endif
+ #if defined(USE_MAG) && defined(SEND_MAG_TELEMETRY)
+   CRSF_FRAME_MAGNETOMETER_INDEX,
+ #endif
+@@ -966,9 +996,12 @@
+   CRSF_SCHEDULE_COUNT_MAX
+ } crsfFrameTypeIndex_e;
+ 
++/* NIMBUS_SEND_STATE: the compact state frame is repeated CRSF_STATE_REPEATS times before every other scheduled frame (battery, flight mode text, ...) */
++#define CRSF_STATE_REPEATS 3
++#define CRSF_SCHEDULE_ARRAY_SIZE (CRSF_SCHEDULE_COUNT_MAX * (1 + CRSF_STATE_REPEATS))
+ static uint8_t crsfScheduleCount;
+-static uint16_t crsfSchedule[CRSF_SCHEDULE_COUNT_MAX];
+-static timeDelta_t crsfScheduleIntervalUs[CRSF_SCHEDULE_COUNT_MAX];
++static uint16_t crsfSchedule[CRSF_SCHEDULE_ARRAY_SIZE];
++static timeDelta_t crsfScheduleIntervalUs[CRSF_SCHEDULE_ARRAY_SIZE];
+ static uint8_t crsfScheduleIndex;
+ static timeUs_t crsfNextScheduleTimeUs;
+ 
+@@ -1033,6 +1066,11 @@
+     return CRSF_FRAME_LENGTH_NON_PAYLOAD + CRSF_FRAME_OPTRANGE_PAYLOAD_SIZE;
+   }
+ #endif
++#if defined(USE_EKF) && defined(USE_RANGEFINDER_OPTFLOW_MTF) && defined(NIMBUS_SEND_STATE)
++  if (schedule & BIT(CRSF_FRAME_STATE_INDEX)) {
++    return CRSF_FRAME_LENGTH_NON_PAYLOAD + CRSF_FRAME_STATE_PAYLOAD_SIZE;
++  }
++#endif
+ #if defined(USE_MAG) && defined(SEND_MAG_TELEMETRY)
+   if (schedule & BIT(CRSF_FRAME_MAGNETOMETER_INDEX)) {
+     return CRSF_FRAME_LENGTH_NON_PAYLOAD + CRSF_FRAME_MAGNETOMETER_PAYLOAD_SIZE;
+@@ -1204,6 +1242,14 @@
+   }
+ #endif
+ 
++#if defined(USE_EKF) && defined(USE_RANGEFINDER_OPTFLOW_MTF) && defined(NIMBUS_SEND_STATE)
++  if (currentSchedule & BIT(CRSF_FRAME_STATE_INDEX)) {
++    crsfInitializeFrame(dst);
++    crsfFrameState(dst);
++    crsfFinalize(dst);
++  }
++#endif
++
+ #if defined(USE_MAG) && defined(SEND_MAG_TELEMETRY)
+   if (currentSchedule & BIT(CRSF_FRAME_MAGNETOMETER_INDEX)) {
+     crsfInitializeFrame(dst);
+@@ -1270,7 +1316,7 @@
+   const uint16_t kinematicSchedule = BIT(CRSF_FRAME_KINEMATIC_STATE_INDEX);
+ #endif
+ #endif
+-#if !defined(EKF_ONLY)
++#if !defined(EKF_ONLY) && !defined(NIMBUS_SEND_STATE)
+   if (sensors(SENSOR_ACC) &&
+       telemetryIsSensorEnabled(SENSOR_PITCH | SENSOR_ROLL | SENSOR_HEADING)) {
+     crsfSchedule[index++] = BIT(CRSF_FRAME_ATTITUDE_INDEX);
+@@ -1355,7 +1401,7 @@
+   }
+ #endif
+ 
+-#if defined(USE_RANGEFINDER_OPTFLOW_MTF) && !defined(EKF_ONLY)
++#if defined(USE_RANGEFINDER_OPTFLOW_MTF) && !defined(EKF_ONLY) && !defined(NIMBUS_SEND_STATE)
+   if (sensors(SENSOR_OPTICALFLOW) &&
+       telemetryIsSensorEnabled(SENSOR_OPTRANGE)) {
+     crsfSchedule[index++] = BIT(CRSF_FRAME_OPTRANGE_INDEX);
+@@ -1422,6 +1468,26 @@
+     }
+   }
+ #endif
++
++#if defined(USE_EKF) && defined(USE_RANGEFINDER_OPTFLOW_MTF) && defined(NIMBUS_SEND_STATE) && !defined(EKF_ONLY)
++  if (sensors(SENSOR_ACC) && sensors(SENSOR_OPTICALFLOW) && telemetryIsSensorEnabled(SENSOR_OPTRANGE)) {
++    uint16_t others[CRSF_SCHEDULE_COUNT_MAX];
++    const int otherCount = index;
++    for (int i = 0; i < otherCount; i++) {
++      others[i] = crsfSchedule[i];
++    }
++    index = 0;
++    for (int i = 0; i < otherCount; i++) {
++      for (int r = 0; r < CRSF_STATE_REPEATS; r++) {
++        crsfSchedule[index++] = BIT(CRSF_FRAME_STATE_INDEX);
++      }
++      crsfSchedule[index++] = others[i];
++    }
++    if (otherCount == 0) {
++      crsfSchedule[index++] = BIT(CRSF_FRAME_STATE_INDEX);
++    }
++  }
++#endif
+ 
+   crsfScheduleCount = (uint8_t)index;
+   crsfScheduleIndex = 0;
+--- a/src/main/rx/crsf_protocol.h
++++ b/src/main/rx/crsf_protocol.h
+@@ -70,6 +70,7 @@
+     CRSF_FRAMETYPE_MOTOR_RPM = 0xD2, // motor output and RPM data
+     CRSF_FRAMETYPE_OPTRANGE = 0xD3, // opticalflow rangefinder data
+     CRSF_FRAMETYPE_KINEMATIC_STATE = 0xD4, // EKF position/velocity + attitude data
++    CRSF_FRAMETYPE_STATE = 0xD6, // compact state (NIMBUS_SEND_STATE): range + flow + EKF velocity + attitude in one frame
+ } crsfFrameType_e;
+ 
+ enum {
+@@ -114,6 +115,7 @@
+     CRSF_FRAME_RANGEFINDER_TF_PAYLOAD_SIZE = 4,
+     CRSF_FRAME_OPTRANGE_PAYLOAD_SIZE = 12, // [dest 0x00][origin 0xC8] + 10 data bytes
+     CRSF_FRAME_RAW_IMU_PAYLOAD_SIZE = 12,
++    CRSF_FRAME_STATE_PAYLOAD_SIZE = 22, // [dest][origin] + 20 data bytes (telemetry/crsf_state_pack.h)
+     CRSF_FRAME_KINEMATIC_STATE_PAYLOAD_SIZE = 20, // [dest][origin] + pos xyz, vel xyz, attitude rpy
+ #ifdef USE_DSHOT_TELEMETRY
+     CRSF_FRAME_MOTOR_RPM_PAYLOAD_SIZE = 13, // with telemetry: 1 pole + 4*(1 pwm + 2 erpm)
+--- a/mk/source.mk
++++ b/mk/source.mk
+@@ -97,6 +97,7 @@
+             flight/height_hold_core.c \
+             flight/estimator_gates.c \
+             flight/ground_hold_gate.c \
++            telemetry/crsf_state_pack.c \
+             flight/imu.c \
+             flight/mixer.c \
+             flight/mixer_init.c \

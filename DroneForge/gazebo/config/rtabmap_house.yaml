@@ -1,0 +1,46 @@
+# RTAB-Map for the Gazebo house, adapted from the Flop project (launch/rtabmap_slam.launch.py): same 2D grid ideas (ray tracing, noise filter, cluster filter,
+# Grid/GlobalFullUpdate), but fed with RGB + DA3 metric depth and the FC pose (TF odom->base_link) instead of a stereo-inertial D435i.
+# Heights are relative to base_link (the drone, flying at ~0.6 m, so the floor is at about -0.6): everything between -0.1 and +1.2 m is an obstacle for the drone.
+rtabmap:
+  ros__parameters:
+    use_sim_time: true
+    frame_id: base_link
+    odom_frame_id: odom
+    map_frame_id: map
+    publish_tf: true
+    subscribe_depth: true
+    subscribe_rgb: true
+    subscribe_odom_info: false
+    approx_sync: false
+    sync_queue_size: 30
+    wait_for_transform: 0.5
+    database_path: /tmp/droneforge_rtabmap.db
+    Rtabmap/DetectionRate: "2.0"
+    Mem/IncrementalMemory: "true"
+    Mem/InitWMWithAllNodes: "false"
+    Reg/Force3DoF: "true"
+    Optimizer/Slam2D: "true"
+    RGBD/LinearUpdate: "0.05"
+    RGBD/AngularUpdate: "0.05"
+    RGBD/NeighborLinkRefining: "false"
+    Vis/MinInliers: "10"
+    Kp/MaxFeatures: "400"
+    Grid/FromDepth: "true"
+    Grid/3D: "false"
+    Grid/RayTracing: "true"
+    Grid/CellSize: "0.05"
+    Grid/RangeMin: "0.3"
+    Grid/RangeMax: "3.0"
+    Grid/DepthDecimation: "2"
+    Grid/NormalsSegmentation: "false"
+    Grid/MaxGroundHeight: "-0.25"
+    Grid/MinObstacleHeight: "-0.1"
+    Grid/MaxObstacleHeight: "1.2"
+    Grid/NoiseFilteringRadius: "0.15"
+    Grid/NoiseFilteringMinNeighbors: "6"
+    Grid/ClusterRadius: "0.15"
+    Grid/MinClusterSize: "12"
+    Grid/FootprintRadius: "0.15"
+    Grid/ProbHit: "0.7"
+    Grid/ProbMiss: "0.4"
+    Grid/GlobalFullUpdate: "true"

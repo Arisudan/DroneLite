@@ -1,0 +1,84 @@
+--- height_hold_core.c	2026-11-13 16:12:56.379157306 +0530
++++ /home/htic/Music/DroneForge/firmware/fc_matek_h743/source_snapshots/2026-11-13_hybrid-v3/height_hold_core.c	2026-11-13 16:17:09.905885338 +0530
+@@ -4,6 +4,18 @@
+ static float clampf_(float v, float lo, float hi) { return v < lo ? lo : (v > hi ? hi : v); }
+ static float absf_(float v) { return v < 0.0f ? -v : v; }
+ 
++/* reading -> true height above the ground (points from the PC's range_cal, 0.07 m ground reading: (0.29,0.20), (0.41,0.32), (0.45,0.45) -> above the ground); identity above 0.38 m and below 0 */
++float hhCorrectHeight(float z)
++{
++    static const float zr[] = {0.00f, 0.22f, 0.34f, 0.38f};
++    static const float zt[] = {0.00f, 0.13f, 0.25f, 0.38f};
++    if (z <= 0.0f || z >= zr[3]) return z;
++    for (int i = 1; i < 4; i++) {
++        if (z <= zr[i]) return zt[i - 1] + (zt[i] - zt[i - 1]) * (z - zr[i - 1]) / (zr[i] - zr[i - 1]);
++    }
++    return z;
++}
++
+ void hhDefaults(hhParams_t *p)
+ {
+     p->kp_z = 0.9923f; p->kv_z = 0.0538f; p->ki_z = 0.02f; p->i_max = 0.12f;
+@@ -14,7 +26,7 @@
+     p->base_tau = 1.5f; p->base_follow_max = 0.06f; p->lift_vz = 0.05f; p->lift_m = 0.15f;
+     p->takeoff_start_frac = 0.70f; p->takeoff_creep_per_s = 0.010f; p->takeoff_cap_frac = 1.40f; p->takeoff_fail_s = 3.0f;
+     p->land_rate = 0.12f; p->land_slow_rate = 0.06f; p->land_slow_below = 0.30f;
+-    p->touch_m = 0.07f; p->touch_s = 0.4f; p->idle_ramp_per_s = 1.0f; p->takeoff_ramp_per_s = 0.35f; p->cap_land_s = 1.5f; p->lift_base_boost = 0.04f;
++    p->touch_m = 0.07f; p->touch_s = 0.4f; p->idle_ramp_per_s = 1.0f; p->takeoff_ramp_per_s = 0.35f; p->cap_land_s = 1.5f; p->lift_base_boost = 0.0f; p->takeoff_vz_max = 0.30f; p->takeoff_vz_back = 0.05f; p->takeoff_handover_margin = 0.05f;
+ }
+ 
+ void hhEngage(hhState_t *s, const hhParams_t *p, float z, float f0, float vbat)
+@@ -74,13 +86,21 @@
+ 
+ float hhUpdate(hhState_t *s, const hhParams_t *p, float dt, float z, float vz, float vbat)
+ {
++    z = hhCorrectHeight(z);
+     s->t += dt; s->t_mode += dt;
+     const float vb = vbat > 6.0f ? vbat : s->v0;
+ 
+     if (s->mode == HH_MODE_TAKEOFF) {
+         const float cap = clampf_(p->takeoff_cap_frac * s->f_base, p->thr_idle, p->thr_max);
+         if (s->f_cur < s->f_start) { s->f_cur += p->takeoff_ramp_per_s * dt; if (s->f_cur > s->f_start) s->f_cur = s->f_start; }
+-        else s->f_cur += p->takeoff_creep_per_s * dt;
++        else {
++            float rate = p->takeoff_creep_per_s;                   /* the climb is open loop (throttle creeps up): a speed governor keeps it from becoming a burst once the drone leaves the ground-effect cushion */
++            if (z > 0.25f) {                                     /* only above 0.25 m: near the floor the EKF speed reads up to +0.2 m/s with the motors spinning (measured), which would stall the creep */
++                if (vz > p->takeoff_vz_max) rate = -p->takeoff_vz_back;
++                else if (vz > 0.6f * p->takeoff_vz_max) rate = 0.0f;
++            }
++            s->f_cur += rate * dt;
++        }
+         if (s->f_cur >= cap) { s->f_cur = cap; s->t_cap += dt; if (s->t_cap > p->takeoff_fail_s) s->fail = true; }
+         /* the throttle at which it really started to rise: a rise (z above 4 cm and vz above lift_vz) that lasts 0.3 s. One noisy speed sample at 0.5 throttle must not become the hover base (it left the hold 0.15 too low and stuck in ground effect). */
+         if (!s->lifted) {
+@@ -88,7 +108,8 @@
+             if (s->t_liftdet >= 0.3f) { s->lifted = true; s->f_lift = s->f_cur; }
+         }
+         /* the range over-reads by ~9 cm at 6-30 cm, so a drone still at 11 cm real height can read 0.2 m */
+-        if (z > p->lift_m) {                                    /* airborne: hand over to the hold, bumpless (an early handover on an over-reading sensor is recovered by the sank-back rule in the hold) */
++        /* the take-off CLIMBS to the target height; only there does the hold take over (bumpless): the drone is out of ground effect, so the throttle that got it up is the hover base */
++        if (z > p->lift_m && z >= s->target_pending - p->takeoff_handover_margin) {
+             /* the hover base is what PHYSICALLY lifted the drone (not the PC's reference, which depends on a voltage reading and a hover calibration) */
+             s->f_base = clampf_((s->lifted ? s->f_lift : s->f_cur) + p->lift_base_boost, p->thr_idle, p->thr_max); s->v0 = vb; s->base_learned = true;
+             const float base = s->f_base;
+--- height_hold_core.h	2026-11-13 16:12:56.379223989 +0530
++++ /home/htic/Music/DroneForge/firmware/fc_matek_h743/source_snapshots/2026-11-13_hybrid-v3/height_hold_core.h	2026-11-13 16:17:09.905936229 +0530
+@@ -32,6 +32,9 @@
+     float takeoff_ramp_per_s;            /* 0.35: throttle fraction per second from idle up to the creep start level (NEVER a step: Betaflight's throttle boost turns a throttle step into a full-throttle burst) */
+     float cap_land_s;  /* appended */              /* 1.5: in HOLD with the throttle pinned at thr_max and the drone not climbing for this long = the thrust limit is reached: land gently instead of fighting (0 = off) */
+     float lift_base_boost;               /* 0.04: added to the throttle that lifted the drone to get the hover base (the lift-off happens in ground effect, ~0.09 below the free-air hover on the real drone) */
++    float takeoff_vz_max;                /* 0.30 m/s: during the take-off climb the creep stops above 0.6x this and backs off above it (a speed governor: the climb is open loop otherwise) */
++    float takeoff_vz_back;               /* 0.05: throttle fraction per second removed while above takeoff_vz_max */
++    float takeoff_handover_margin;       /* 0.05 m: the hold takes over this close below the target height (take-off CLIMBS to the target, then holds there) */
+ } hhParams_t;
+ 
+ enum { HH_MODE_HOLD = 0, HH_MODE_TAKEOFF = 1, HH_MODE_LAND = 2 };
+@@ -66,6 +69,8 @@
+     bool  cap_landing;                   /* the current landing was started by the thrust-limit rule */
+ } hhState_t;
+ 
++/* the MTF-02P over-reads by ~9 cm between ~20 and ~40 cm (measured; the PC controller corrects it with the same curve): height above the learned ground as READ -> true height above the ground */
++float hhCorrectHeight(float z_read);
+ void  hhDefaults(hhParams_t *p);
+ /* start holding: z = current height (m), f0 = hover throttle fraction (base), vbat in V */
+ void  hhEngage(hhState_t *s, const hhParams_t *p, float z, float f0, float vbat);

@@ -1,0 +1,225 @@
+--- height_hold.c	2026-11-14 11:40:15.356851832 +0530
++++ /home/htic/Music/DroneForge/firmware/fc_matek_h743/source_snapshots/2026-11-14_hybrid-v4/height_hold.c	2026-11-14 11:59:33.648416684 +0530
+@@ -20,7 +20,11 @@
+ #include "flight/failsafe.h"
+ #include "flight/height_hold.h"
+ #include "flight/height_hold_core.h"
++#include "flight/xy_hold_core.h"
+ #include "flight/ground_hold_gate.h"
++#include "flight/estimator_gates.h"
++#include "sensors/opticalflow.h"
++#include "sensors/rangefinder.h"
+ #include "flight/kinematic_estimator.h"
+ 
+ #include "rx/rx.h"
+@@ -40,6 +44,10 @@
+ #define HH_GROUND_HOLD_M     0.05f   /* the attitude integrator is held at zero while the drone is within this height of the floor */
+ #define HH_CEILING_M         2.8f    /* above this the hold lets go (a fault): the PC lands */
+ 
++float xyHoldAngle[2] = { 0.0f, 0.0f };
++static xyParams_t xyParams;
++static xyState_t xyState;
++static bool xyStarted = false;
+ static hhParams_t hhParams;
+ static hhState_t hhState;
+ static bool hhFault = false;
+@@ -49,6 +57,8 @@
+ static uint16_t groundN = 0;
+ static bool wasArmed = false;
+ static timeUs_t lastRunUs = 0;
++static egFlatline_t flatline;
++static bool flatlineInit = false;
+ static groundHoldGate_t ghGate;
+ static bool ghGateInit = false;
+ static timeUs_t ghLastUs = 0;
+@@ -56,6 +66,7 @@
+ void heightHoldInit(void)
+ {
+     hhDefaults(&hhParams);
++    xyDefaults(&xyParams);
+     hhState.active = false;
+     hhFault = false;
+     groundN = 0;
+@@ -80,6 +91,17 @@
+     return ghUpdate(&ghGate, st->posZ - groundZ, dt, true);
+ }
+ bool heightHoldHasFault(void) { return hhFault; }
++bool heightHoldXyDisabled(void) { return xyStarted && xyState.disabled; }
++
++/* floor contact for the EKF zero-velocity update: disarmed (the drone sits still), or armed on the floor within 3 cm of the learned ground */
++bool heightHoldFloorContact(void)
++{
++    if (!ARMING_FLAG(ARMED)) return true;
++    if (groundN < 20) return false;
++    const kinematicState_t *st = kinematicEstimatorGetState();
++    if (!isfinite(st->posZ)) return false;
++    return (st->posZ - groundZ) < 0.03f;
++}
+ int heightHoldMode(void) { return hhState.active ? hhState.mode : -1; }
+ int16_t heightHoldRcCommandThrottle(void) { return hhRcThrottle; }
+ 
+@@ -97,6 +119,7 @@
+ 
+ static void release(bool fault)
+ {
++    xyHoldAngle[0] = xyHoldAngle[1] = 0.0f; xyStarted = false;      /* the sideways hold ends with the height hold */
+     hhDisengage(&hhState);
+     if (fault) hhFault = true;
+ }
+@@ -104,6 +127,7 @@
+ void heightHoldUpdate(timeUs_t currentTimeUs)
+ {
+     const bool armed = ARMING_FLAG(ARMED);
++    if (!armed) { xyHoldAngle[0] = xyHoldAngle[1] = 0.0f; xyStarted = false; }
+     if (armed && !wasArmed) { groundN = 0; groundZ = 0.0f; hhFault = false; }
+     wasArmed = armed;
+ 
+@@ -149,6 +173,15 @@
+ 
+     /* active: let go on anything suspicious (the PC then takes the throttle back and lands) */
+     const float zr = z - groundZ;
++    /* frozen range payload while flying (Nimbus 'flatline'): the whole sample unchanged for EG_FLATLINE_S */
++    if (!flatlineInit) { egFlatlineInit(&flatline); flatlineInit = true; }
++    if (zr > 0.05f) {
++        const uint32_t sig = egPayloadSignature(rangefinderGetLatestRawAltitude(), rangefinderGetLatestDistStrength(), rangefinderGetLatestDistPrecision(),
++                                                opticalflowGetLatestVelX(), opticalflowGetLatestVelY(), opticalflowGetLatestFlowQuality());
++        if (egFlatlineUpdate(&flatline, constrainf(dt, 0.005f, 0.1f), sig)) { egFlatlineInit(&flatline); release(true); return; }
++    } else {
++        egFlatlineInit(&flatline);
++    }
+     if (!armed || FLIGHT_MODE(FAILSAFE_MODE) || !finite || !rangeFresh || zr > HH_CEILING_M || zr < -0.2f) {
+         release(true);
+         return;
+@@ -163,6 +196,14 @@
+     if (hhState.fail) { release(true); return; }                              /* take-off never lifted: the PC takes over and disarms */
+     if (hhState.landed && f <= hhParams.thr_idle + 0.001f) { release(false); hhLandLatch = true; return; }
+     hhRcThrottle = rcCommandFromFraction(f);
++
++    /* sideways hold: the drone's own speed from the EKF, the true height, angle offsets for pid.c */
++    float fwd = 0.0f, rgt = 0.0f, rollDeg = 0.0f, pitchDeg = 0.0f;
++    if (!xyStarted) { xyStart(&xyState); xyStarted = true; }
++    if (kinematicEstimatorGetBodyVelocity(&fwd, &rgt) && hhState.active) {
++        xyUpdate(&xyState, &xyParams, dtc, fwd, rgt, hhCorrectHeight(zr), hhState.mode == HH_MODE_HOLD || hhState.mode == HH_MODE_TAKEOFF, &rollDeg, &pitchDeg);
++    }
++    xyHoldAngle[0] = rollDeg; xyHoldAngle[1] = pitchDeg;
+ }
+ 
+ #endif
+--- height_hold.h	2026-11-14 11:40:15.356908564 +0530
++++ /home/htic/Music/DroneForge/firmware/fc_matek_h743/source_snapshots/2026-11-14_hybrid-v4/height_hold.h	2026-11-14 11:59:33.648476216 +0530
+@@ -12,6 +12,12 @@
+  *   FC take-off: while still on the floor, a target >= 1150 us plus a valid hover reference on CH10 starts a creep (level, throttle stick at minimum)
+  * Mode activation: BOXUSER1 ("USER1") on AUX5 above 1100 us:  aux <n> 40 4 8 48 0 0
+  * Height = EKF height (range sensor) minus the sensor's ground offset learned while armed on the ground. */
++/* FC-side sideways hold (flight/xy_hold_core.c): roll and pitch ANGLE offsets in degrees, added to the ANGLE-mode target in pid.c (index 0 roll, 1 pitch); zero when not active */
++extern float xyHoldAngle[2];
++/* true while the drone is on the floor (disarmed, or armed within 3 cm of the learned ground): the EKF holds its speed at zero there (zero-velocity update) */
++bool heightHoldFloorContact(void);
++/* the sideways loop switched itself off for this flight (runaway guard) */
++bool heightHoldXyDisabled(void);
+ void heightHoldInit(void);
+ void heightHoldUpdate(timeUs_t currentTimeUs);   /* called at the range-sensor rate (50 Hz), right after the range sample was fused into the EKF */
+ bool heightHoldIsActive(void);
+--- kinematic_estimator.c	2026-11-14 11:40:15.356925544 +0530
++++ /home/htic/Music/DroneForge/firmware/fc_matek_h743/source_snapshots/2026-11-14_hybrid-v4/kinematic_estimator.c	2026-11-14 11:59:33.648566002 +0530
+@@ -24,6 +24,7 @@
+ 
+ #include "flight/kinematic_estimator.h"
+ #include "flight/imu.h"
++#include "flight/height_hold.h"
+ #include "flight/estimator_gates.h"
+ 
+ #include "common/maths.h"
+@@ -573,6 +574,16 @@
+   return kinematicEstimatorLastRangeUs == 0 ? UINT32_MAX : (uint32_t)(nowUs - kinematicEstimatorLastRangeUs);
+ }
+ 
++/* zero-velocity update on the floor: the drone is not moving, so the filter speed is set to zero there. Without it the speed read +0.1..+0.2 m/s on the floor with the motors
++ * spinning (accelerometer vibration while the range sensor reads its minimum): measured on the real drone 2026-11-13. */
++static void kinematicEstimatorFloorZeroVelocity(void) {
++  if (heightHoldFloorContact()) {
++    kinematicEstimator.state.velX = 0.0f;
++    kinematicEstimator.state.velY = 0.0f;
++    kinematicEstimator.state.velZ = 0.0f;
++  }
++}
++
+ void kinematicEstimatorUpdateFromRangefinder(
+     const rangefinderMeasurement_t *rangefinderMeasurement) {
+   if (!rangefinderMeasurement || !rangefinderMeasurement->isHealthy ||
+@@ -604,6 +615,7 @@
+           (float)rangefinderMeasurement->calculatedAltitudeCm),
+       rangefinderVarianceScale);
+   kinematicEstimatorLastRangeUs = micros();
++  kinematicEstimatorFloorZeroVelocity();
+ }
+ 
+ #ifdef USE_EKF_GPS
+--- pid.c	2026-11-14 11:40:15.356967743 +0530
++++ /home/htic/Music/DroneForge/firmware/fc_matek_h743/source_snapshots/2026-11-14_hybrid-v4/pid.c	2026-11-14 11:59:33.648631158 +0530
+@@ -47,6 +47,9 @@
+ #include "fc/runtime_config.h"
+ 
+ #include "flight/gps_rescue.h"
++#ifdef USE_EKF
++#include "flight/height_hold.h"
++#endif
+ #include "flight/imu.h"
+ #include "flight/mixer.h"
+ #include "flight/rpm_filter.h"
+@@ -392,6 +395,9 @@
+ #ifdef USE_GPS_RESCUE
+     angleTarget += gpsRescueAngle[axis] / 100.0f; // Angle is in centidegrees, stepped on roll at 10Hz but not on pitch
+ #endif
++#ifdef USE_EKF
++    angleTarget += xyHoldAngle[axis]; // FC sideways hold (xy_hold_core.c): degrees, axis 0 roll, 1 pitch; zero when the hold is not active
++#endif
+     const float currentAngle = (attitude.raw[axis] - angleTrim->raw[axis]) / 10.0f; // stepped at 500hz with some 4ms flat spots
+     const float errorAngle = angleTarget - currentAngle;
+     float angleRate = errorAngle * pidRuntime.angleGain + angleFeedforward;
+--- crsf.c	2026-11-14 11:40:15.357000395 +0530
++++ /home/htic/Music/DroneForge/firmware/fc_matek_h743/source_snapshots/2026-11-14_hybrid-v4/crsf.c	2026-11-14 11:59:33.648731337 +0530
+@@ -579,6 +579,7 @@
+   } else if (heightHoldHasFault()) {
+     sbufWriteString(dst, " HF");
+   }
++#if !defined(NIMBUS_SEND_STATE)    /* with the compact state frame the diagnostic text is dropped: it cost ~35 of ~200 bytes per cycle, and the FC log (blackbox) has the same data */
+   {
+     /* wireless diagnostics, three variants in rotation (one per flight-mode frame, ~1 Hz each):
+      *  0: motors (as MSP_MOTOR, 1000..2000) and the throttle in use (us)      " M1500,1500,1500,1500 T1500"
+@@ -606,6 +607,7 @@
+     sbufWriteString(dst, dbg);
+   }
+ #endif
++#endif
+   if (!ARMING_FLAG(ARMED)) {
+     sbufWriteU8(dst, '*');
+   }
+@@ -908,7 +910,7 @@
+   const bool ekfValid = isfinite(state->velX) && isfinite(state->velY) && isfinite(state->velZ);
+   uint8_t data[CRSF_STATE_PAYLOAD_BYTES];
+   const int hhMode = heightHoldMode();
+-  const uint8_t holdBits = (uint8_t)((heightHoldIsActive() ? 0x04 : 0) | (heightHoldHasFault() ? 0x08 : 0) | ((hhMode > 0 ? (hhMode & 3) : 0) << 4));
++  const uint8_t holdBits = (uint8_t)((heightHoldIsActive() ? 0x04 : 0) | (heightHoldHasFault() ? 0x08 : 0) | ((hhMode > 0 ? (hhMode & 3) : 0) << 4) | (heightHoldXyDisabled() ? 0x80 : 0));
+ 
+   /* horizontal speed in the DRONE's axes (forward, right), from the EKF: no yaw convention needed on the PC (0xD4 keeps the world-frame values) */
+   float velFwd = state->velX, velRight = state->velY;
+@@ -1002,7 +1004,7 @@
+ } crsfFrameTypeIndex_e;
+ 
+ /* NIMBUS_SEND_STATE: the compact state frame is repeated CRSF_STATE_REPEATS times before every other scheduled frame (battery, flight mode text, ...) */
+-#define CRSF_STATE_REPEATS 3
++#define CRSF_STATE_REPEATS 4
+ #define CRSF_SCHEDULE_ARRAY_SIZE (CRSF_SCHEDULE_COUNT_MAX * (1 + CRSF_STATE_REPEATS))
+ static uint8_t crsfScheduleCount;
+ static uint16_t crsfSchedule[CRSF_SCHEDULE_ARRAY_SIZE];
+--- source.mk	2026-11-14 11:40:15.357033955 +0530
++++ /home/htic/Music/DroneForge/firmware/fc_matek_h743/source_snapshots/2026-11-14_hybrid-v4/source.mk	2026-11-14 11:59:33.648825781 +0530
+@@ -95,6 +95,7 @@
+             flight/kinematic_estimator.c \
+             flight/height_hold.c \
+             flight/height_hold_core.c \
++            flight/xy_hold_core.c \
+             flight/estimator_gates.c \
+             flight/ground_hold_gate.c \
+             telemetry/crsf_state_pack.c \

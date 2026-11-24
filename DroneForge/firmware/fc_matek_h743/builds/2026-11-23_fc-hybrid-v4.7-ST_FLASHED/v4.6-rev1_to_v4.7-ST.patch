@@ -1,0 +1,285 @@
+--- /home/htic/Music/DroneForge/firmware/fc_matek_h743/source_snapshots/2026-11-21_v4.6-rev1_FLASHED/xy_hold_core.c	2026-11-21 16:38:34.224489609 +0530
++++ src/xy_hold_core.c	2026-11-21 17:28:31.858878110 +0530
+@@ -6,21 +6,47 @@
+ 
+ void xyDefaults(xyParams_t *p)
+ {
+-    p->kv = 5.0f; p->kp = 2.4f; p->ki = 0.15f; p->max_deg = 4.0f; p->min_z = 0.06f; p->test_z = 0.08f;      /* v4.6-rev1 smooth, stable horizontal position hold (kp 2.4, ki 0.15, max 4.0 deg) */
++    p->kv = 7.0f; p->kp = 6.0f; p->ki = 0.60f; p->max_deg = 4.0f; p->min_z = 0.06f; p->test_z = 0.08f;      /* v4.7: kv 7, kp 6, ki 0.6 (v4.6-rev1: 5 / 2.4 / 0.15). Bench (xy_bench.py, the drone's flow noise + 1 deg level error): max drift 396 -> ~190 mm median */
+     p->test_deg = 2.5f; p->test_s = 0.8f; p->test_min_dv = 0.08f; p->calm_speed = 0.50f; p->calm_s = 0.5f;
+     p->runaway_speed = 1.0f; p->runaway_s = 1.0f; p->runaway_pos = 2.5f;
+     p->skip_test = 1.0f;
++    p->stick_db = 0.05f; p->brake_speed = 0.15f; p->brake_s = 0.2f; p->aid_max_m = 3.0f; p->climb_trim = 3.0f;      /* climb_trim 3 deg/m: learns ~95 % of a level error in a 7 s climb (bench: worst drift with the VO aid 171 -> 77 mm) */
+ }
+ 
+ void xyStart(xyState_t *s) { memset(s, 0, sizeof(*s)); s->active = true; }
+ /* mode switch back to position hold: a new "stay here" point (displacement and integral cleared); resets runaway latch */
+-void xyReposition(xyState_t *s) { s->p[0] = s->p[1] = 0.0f; s->i[0] = s->i[1] = 0.0f; s->t_run = 0.0f; s->out[0] = s->out[1] = 0.0f; s->disabled = false; }
++void xyReposition(xyState_t *s) { s->p[0] = s->p[1] = 0.0f; s->t_run = 0.0f; s->out[0] = s->out[1] = 0.0f; s->disabled = false; s->braking = false; s->t_brake = 0.0f; }   /* v4.7: the integral (level trim) is KEPT */
++void xyBrakeThenHold(xyState_t *s) { s->braking = true; s->t_brake = 0.0f; s->stick_on = false; s->out[0] = s->out[1] = 0.0f; }
+ void xyStop(xyState_t *s) { s->active = false; s->out[0] = s->out[1] = 0.0f; }
+ 
+ void xyUpdate(xyState_t *s, const xyParams_t *p, float dt, float forward, float right, float z, bool hold, float *roll_deg, float *pitch_deg)
+ {
++    xyUpdateST(s, p, dt, forward, right, z, hold, 0.0f, 0.0f, false, 0.0f, 0.0f, roll_deg, pitch_deg);
++}
++
++void xyUpdateST(xyState_t *s, const xyParams_t *p, float dt, float forward, float right, float z, bool hold, float stick_pitch, float stick_roll,
++                bool aid_valid, float aid_fwd, float aid_right, float *roll_deg, float *pitch_deg)
++{
+     *roll_deg = 0.0f; *pitch_deg = 0.0f;
+     if (!s->active || s->disabled || z < p->min_z) { s->out[0] = s->out[1] = 0.0f; return; }
++    /* v4.7 ST: a deflected stick flies the drone in pure ANGLE mode (the hold adds nothing, displacement and trim are frozen); after the release the hold only
++     * damps the speed until the drone has stopped, then it re-anchors THERE (before v4.7 the hold pulled the drone back towards the old point and fought the stick) */
++    const bool stick = fabsf(stick_pitch) > p->stick_db || fabsf(stick_roll) > p->stick_db;
++    if (stick) { s->stick_on = true; s->braking = false; s->t_brake = 0.0f; s->out[0] = s->out[1] = 0.0f; return; }
++    if (s->stick_on) { s->stick_on = false; s->braking = true; s->t_brake = 0.0f; }
++    if (s->braking) {
++        const float spd_b = sqrtf(forward * forward + right * right);
++        s->t_brake = spd_b < p->brake_speed ? s->t_brake + dt : 0.0f;
++        if (s->t_brake >= p->brake_s) { xyReposition(s); }
++        else {
++            const float o_p = clampf_(-p->kv * forward, -p->max_deg, p->max_deg), o_r = clampf_(-p->kv * right, -p->max_deg, p->max_deg);
++            s->out[0] = o_r; s->out[1] = o_p; *pitch_deg = o_p; *roll_deg = o_r; return;
++        }
++    }
++    /* v4.7: the PC's visual-odometry position (drift-free, anchored to a key frame) replaces the flow-integrated displacement while it is fresh; between aid
++     * samples and without it the displacement keeps integrating the flow speed as before */
++    s->aid_used = aid_valid && fabsf(aid_fwd) < p->aid_max_m && fabsf(aid_right) < p->aid_max_m;
++    if (s->aid_used && hold) { s->p[0] = aid_fwd; s->p[1] = aid_right; }
+     /* the speed measurement is noisy (flow + EKF): the sign test works on a low-passed copy (tau 0.15 s) */
+     const float a_lp = dt / (0.15f + dt);
+     s->vf[0] += (forward - s->vf[0]) * a_lp; s->vf[1] += (right - s->vf[1]) * a_lp;
+@@ -68,10 +94,13 @@
+     }
+     /* position terms: displacement since the loop started (no yaw change), its integral learns a constant level error */
+     if (hold && !in_test) {
+-        s->p[0] += forward * dt; s->p[1] += right * dt;
++        if (!s->aid_used) { s->p[0] += forward * dt; s->p[1] += right * dt; }
+         s->i[0] += s->p[0] * dt; s->i[1] += s->p[1] * dt;
+         const float lim = p->max_deg / (p->ki > 1e-6f ? p->ki : 1e-6f);
+         s->i[0] = clampf_(s->i[0], -lim, lim); s->i[1] = clampf_(s->i[1], -lim, lim);
++    } else if (!hold && !in_test && p->ki > 1e-6f) {                 /* v4.7: the climb learns the level trim from the drift speed (kept by the hand-over reposition) */
++        const float lim = p->max_deg / p->ki;
++        s->i[0] = clampf_(s->i[0] + (p->climb_trim / p->ki) * forward * dt, -lim, lim); s->i[1] = clampf_(s->i[1] + (p->climb_trim / p->ki) * right * dt, -lim, lim);
+     }
+     float out[2] = { 0.0f, 0.0f };
+     for (int ax = 0; ax < 2; ax++) {
+@@ -82,7 +111,7 @@
+             out[ax] = -clampf_(p->kv * v[ax], -p->max_deg, p->max_deg);   /* v4.4: full authority (was +-1.5 deg): the real drone drifts ~0.2 m/s^2 after lift-off and +-1.5 deg could not stop it before the runaway guard tripped (2026-11-16, 3 flights); the guard stays the fail-safe */
+             continue;
+         }
+-        const float kp = hold ? p->kp : 0.0f, ki = hold ? p->ki : 0.0f;
++        const float kp = hold ? p->kp : 0.0f, ki = p->ki;               /* v4.7: the trim (integral) acts in the climb too; the displacement only in the hold */
+         out[ax] = -sg * (p->kv * v[ax] + kp * s->p[ax] + ki * s->i[ax]);
+         out[ax] = clampf_(out[ax], -p->max_deg, p->max_deg);
+     }
+--- /home/htic/Music/DroneForge/firmware/fc_matek_h743/source_snapshots/2026-11-21_v4.6-rev1_FLASHED/xy_hold_core.h	2026-11-21 16:38:34.224511419 +0530
++++ src/xy_hold_core.h	2026-11-21 17:28:31.858916845 +0530
+@@ -18,7 +18,13 @@
+     float test_min_dv;              /* 0.08 m/s: smaller response = no usable response */
+     float calm_speed, calm_s;       /* 0.50 m/s for 0.5 s before the test starts (a drift against a level error counts as calm) */
+     float runaway_speed, runaway_s, runaway_pos;   /* 0.8 m/s for 1.0 s, or 1.5 m */
+-    float skip_test;                /* v4.5 rev2: > 0.5 = no sign self-test, the nominal sign is used from the start. The test leans the drone 2.5 deg on both axes for 0.8 s (a visible move forward and right at take-off) and the nominal sign has been confirmed on the real drone in many flights; the runaway guard still switches the loop off if it were wrong */
++    float skip_test;
++    /* v4.7 ST (appended: older fields keep their order for the PC tools) */
++    float stick_db;                 /* 0.05 (fraction of full stick): above this the pilot/PC flies the axis in pure ANGLE mode, the hold adds nothing */
++    float brake_speed, brake_s;     /* 0.15 m/s for 0.2 s after the sticks centre: then the hold re-anchors at that spot (speed damping only while braking) */
++    float aid_max_m;                /* 3.0 m: a position aid (the PC's visual odometry) larger than this is ignored */
++    float climb_trim;               /* 3.0 deg/m: during the take-off climb (no position hold yet) the level trim is learned from the drift speed: trim += climb_trim * speed * dt,
++                                       so the hold starts with the level error already compensated (v4.6-rev1: the first ~0.4 m of drift after the hand-over came from it) */                /* v4.5 rev2: > 0.5 = no sign self-test, the nominal sign is used from the start. The test leans the drone 2.5 deg on both axes for 0.8 s (a visible move forward and right at take-off) and the nominal sign has been confirmed on the real drone in many flights; the runaway guard still switches the loop off if it were wrong */
+ } xyParams_t;
+ 
+ typedef struct {
+@@ -33,11 +39,19 @@
+     float v_start[2], a_pre[2];     /* speed at the start of a test and the drift acceleration measured just before it */
+     float v_hist[2], t_hist;        /* speed 0.6 s ago for the pre-test drift */
+     float out[2];                   /* last output: roll, pitch in degrees */
++    bool  stick_on, braking;        /* v4.7 ST: a stick is deflected / braking after its release */
++    float t_brake;
++    bool  aid_used;                 /* v4.7: the last update used the PC position aid */
+ } xyState_t;
+ 
+ void xyDefaults(xyParams_t *p);
+ void xyStart(xyState_t *s);
+ void xyStop(xyState_t *s);
+-void xyReposition(xyState_t *s);   /* clear displacement and integral only (sign result and runaway latch stay) */
++void xyReposition(xyState_t *s);   /* v4.7: clear the displacement only: the integral (the learned level trim) is kept; xyStart clears it (new flight) */
++void xyBrakeThenHold(xyState_t *s); /* v4.7: damp the speed first, then re-anchor where the drone has stopped (hand-over and stick release) */
+ /* one step. forward/right in m/s, z = true height in m, hold = position terms allowed (take-off climb and hold); outputs roll_deg and pitch_deg */
+ void xyUpdate(xyState_t *s, const xyParams_t *p, float dt, float forward, float right, float z, bool hold, float *roll_deg, float *pitch_deg);
++/* v4.7 ST: the same step with the RC sticks (pitch forward +, roll right +, -1..1) and an optional position aid (aid_valid: the drone's displacement from its hold point
++ * in its own axes, metres: forward, right; from the PC's visual odometry). xyUpdate() = this with centred sticks and no aid. */
++void xyUpdateST(xyState_t *s, const xyParams_t *p, float dt, float forward, float right, float z, bool hold, float stick_pitch, float stick_roll,
++                bool aid_valid, float aid_fwd, float aid_right, float *roll_deg, float *pitch_deg);
+--- /home/htic/Music/DroneForge/firmware/fc_matek_h743/source_snapshots/2026-11-21_v4.6-rev1_FLASHED/height_hold_core.c	2026-11-21 16:38:34.224410998 +0530
++++ src/height_hold_core.c	2026-11-21 17:28:31.858940181 +0530
+@@ -27,6 +27,7 @@
+     p->takeoff_start_frac = 0.82f; p->takeoff_creep_per_s = 0.010f; p->takeoff_fast_per_s = 0.03f; p->takeoff_cap_frac = 1.40f; p->takeoff_fail_s = 3.0f;
+     p->land_rate = 0.16f; p->land_slow_rate = 0.07f; p->land_slow_below = 0.15f;
+     p->touch_m = 0.07f; p->touch_s = 0.30f; p->idle_ramp_per_s = 1.5f; p->takeoff_ramp_per_s = 0.35f; p->cap_land_s = 1.5f; p->lift_base_boost = 0.0f; p->takeoff_vz_max = 0.30f; p->takeoff_vz_back = 0.05f; p->takeoff_handover_margin = 0.05f;
++    p->takeoff_closed = 1.0f;
+ }
+ 
+ void hhEngage(hhState_t *s, const hhParams_t *p, float z, float f0, float vbat)
+@@ -64,7 +65,18 @@
+     const float peak = (h > s->z_ref ? p->climb_peak_frac : p->descent_peak_frac) * p->vz_lim;
+     float T = 1.875f * dz / peak;
+     if (T < 1.5f) T = 1.5f;
+-    s->trans = true; s->t_start = s->t; s->t_dur = T; s->z_from = s->z_ref; s->z_to = h;
++    s->trans = true; s->t_start = s->t; s->t_dur = T; s->z_from = s->z_ref; s->z_to = h; s->v_from = 0.0f;
++}
++
++/* v4.7: a transition that STARTS at the drone's current climb speed v0 (quintic from (z, v0, 0) to (h, 0, 0); monotonic for v0 * T <= 2 * distance) */
++static void hhSetTargetFromSpeed(hhState_t *s, const hhParams_t *p, float h, float v0)
++{
++    hhSetTarget(s, p, h);
++    if (!s->trans) return;
++    const float dz = s->z_to - s->z_from;
++    if (dz <= 0.0f || v0 <= 0.0f) return;
++    if (v0 * s->t_dur > 2.0f * dz) v0 = 2.0f * dz / s->t_dur;
++    s->v_from = v0;
+ }
+ 
+ void hhLand(hhState_t *s, const hhParams_t *p)
+@@ -109,7 +121,8 @@
+         }
+         /* the range over-reads by ~9 cm at 6-30 cm, so a drone still at 11 cm real height can read 0.2 m */
+         /* the take-off CLIMBS to the target height; only there does the hold take over (bumpless): the drone is out of ground effect, so the throttle that got it up is the hover base */
+-        if (z > p->lift_m && z >= s->target_pending - p->takeoff_handover_margin) {
++        const bool closed = p->takeoff_closed > 0.5f && s->lifted;              /* v4.7: the hold flies the rest of the climb */
++        if (z > p->lift_m && (closed || z >= s->target_pending - p->takeoff_handover_margin)) {
+             /* the hover base is what PHYSICALLY lifted the drone (not the PC's reference, which depends on a voltage reading and a hover calibration) */
+             float f_b = (s->lifted ? s->f_lift : s->f_cur) + p->lift_base_boost;
+             /* v4.5: the output must not step at the hand-over. base + integral is set to the creep throttle f_cur, and the integral can only carry i_max: if the lift-off was detected early (a low
+@@ -121,7 +134,8 @@
+             s->mode = HH_MODE_HOLD; s->t_mode = 0.0f; s->z_ref = z; s->vz_ff = 0.0f; s->trans = false; s->overshoot = false;
+             s->integ = clampf_(s->f_cur - (base - p->lift_base_boost), -p->i_max, p->i_max);       /* the output jumps by the ground-effect margin (the base includes it, the integral does not cancel it) */
+             s->target = z;
+-            hhSetTarget(s, p, s->target_pending);
++            if (closed) hhSetTargetFromSpeed(s, p, s->target_pending, vz > 0.0f ? vz : 0.0f);   /* v4.7 */
++            else hhSetTarget(s, p, s->target_pending);
+         } else {
+             s->f_out = s->f_cur;
+             return s->f_out;
+@@ -142,8 +156,10 @@
+     } else if (s->trans) {
+         float u = clampf_((s->t - s->t_start) / s->t_dur, 0.0f, 1.0f);
+         const float u3 = u * u * u, u4 = u3 * u, u5 = u4 * u, u2 = u * u;
+-        s->z_ref = s->z_from + (s->z_to - s->z_from) * (10.0f * u3 - 15.0f * u4 + 6.0f * u5);
+-        s->vz_ff = (s->z_to - s->z_from) / s->t_dur * (30.0f * u2 - 60.0f * u3 + 30.0f * u4);
++        const float V = s->v_from * s->t_dur, D = (s->z_to - s->z_from) - V;                       /* v4.7: quintic with a start speed; V = 0 is the old 10/-15/6 curve */
++        const float c3 = 10.0f * D + 4.0f * V, c4 = -15.0f * D - 7.0f * V, c5 = 6.0f * D + 3.0f * V;
++        s->z_ref = s->z_from + V * u + c3 * u3 + c4 * u4 + c5 * u5;
++        s->vz_ff = (V + 3.0f * c3 * u2 + 4.0f * c4 * u3 + 5.0f * c5 * u4) / s->t_dur;
+         if (u >= 1.0f) { s->trans = false; s->vz_ff = 0.0f; s->z_ref = s->z_to; }
+     }
+     const float e = s->z_ref - z;
+--- /home/htic/Music/DroneForge/firmware/fc_matek_h743/source_snapshots/2026-11-21_v4.6-rev1_FLASHED/height_hold_core.h	2026-11-21 16:38:34.224464864 +0530
++++ src/height_hold_core.h	2026-11-21 17:28:31.858968462 +0530
+@@ -36,6 +36,9 @@
+     float takeoff_vz_back;               /* 0.05: throttle fraction per second removed while above takeoff_vz_max */
+     float takeoff_handover_margin;       /* 0.05 m: the hold takes over this close below the target height (take-off CLIMBS to the target, then holds there) */
+     float takeoff_fast_per_s;            /* 0.03 (v4.5 rev3): creep speed until the drone is 8 cm up (corrected); then takeoff_creep_per_s. The slow creep alone needed ~25 s to reach the lift-off throttle */
++    float takeoff_closed;                /* v4.7: > 0.5 = the height hold takes over as soon as the lift-off is detected and the drone is above lift_m; the rest of the climb is the hold's smooth
++                                            trajectory, starting at the drone's climb speed. 0 = v4.6: the open-loop creep climbs to 5 cm below the target (it overshot: real flights 0.6 -> 0.78 m,
++                                            simulation of the drone 0.80 -> 1.08 m, past the 1.0 m ceiling) */
+ } hhParams_t;
+ 
+ enum { HH_MODE_HOLD = 0, HH_MODE_TAKEOFF = 1, HH_MODE_LAND = 2 };
+@@ -48,6 +51,7 @@
+     float target;                        /* where the reference is heading (m) */
+     bool  trans;
+     float t_start, t_dur, z_from, z_to;  /* minimum-jerk transition */
++    float v_from;                        /* v4.7: speed at the start of the transition (m/s; 0 = from rest, the old minimum-jerk curve) */
+     float t;                             /* own clock (s) */
+     float f_out;                         /* last output */
+     bool  overshoot;
+--- /home/htic/Music/DroneForge/firmware/fc_matek_h743/source_snapshots/2026-11-21_v4.6-rev1_FLASHED/height_hold.c	2026-11-21 16:38:34.224537484 +0530
++++ src/height_hold.c	2026-11-21 17:28:31.858990274 +0530
+@@ -67,6 +67,15 @@
+ static groundHoldGate_t ghGate;
+ static bool ghGateInit = false;
+ static timeUs_t ghLastUs = 0;
++#define HH_AID_MAX_AGE_US    300000  /* v4.7: the PC position aid counts as fresh this long */
++static float aidFwd = 0.0f, aidRight = 0.0f;
++static bool aidValid = false;
++static timeUs_t aidUs = 0;
++
++void heightHoldSetPosAid(int16_t fwdMm, int16_t rightMm, bool valid)
++{
++    aidFwd = fwdMm * 0.001f; aidRight = rightMm * 0.001f; aidValid = valid; aidUs = micros();
++}
+ 
+ void heightHoldInit(void)
+ {
+@@ -214,14 +223,17 @@
+     if (altOnly) {
+         xyPaused = true;                                                       /* ALT HOLD: the height hold runs, the sideways loop gives no tilt */
+     } else if (xyPaused) {
+-        xyReposition(&xyState); xyPaused = false;                              /* back to POS HOLD: stay where it is now */
++        xyBrakeThenHold(&xyState); xyPaused = false;                           /* back to POS HOLD: v4.7 brake, then stay where it stopped (was: reposition at once) */
+     }
+     if (hhLastMode != HH_MODE_HOLD && hhState.mode == HH_MODE_HOLD) {
+-        xyReposition(&xyState);                                                /* handover anchor: reset position displacement to zero at hover location */
++        xyBrakeThenHold(&xyState);                                             /* handover anchor: v4.7 brake first, the hold point is where the drone stopped */
+     }
+     hhLastMode = hhState.mode;
+     if (!xyPaused && kinematicEstimatorGetBodyVelocity(&fwd, &rgt) && hhState.active) {
+-        xyUpdate(&xyState, &xyParams, dtc, fwd, rgt, hhCorrectHeight(zr), hhState.mode == HH_MODE_HOLD, &rollDeg, &pitchDeg);
++        /* v4.7 ST: the RC sticks (rcCommand +-500: roll right +, pitch forward +) and the PC's position aid while fresh */
++        const bool aidFresh = aidValid && aidUs && cmpTimeUs(currentTimeUs, aidUs) < HH_AID_MAX_AGE_US;
++        xyUpdateST(&xyState, &xyParams, dtc, fwd, rgt, hhCorrectHeight(zr), hhState.mode == HH_MODE_HOLD, rcCommand[PITCH] / 500.0f, rcCommand[ROLL] / 500.0f,
++                   aidFresh, aidFwd, aidRight, &rollDeg, &pitchDeg);
+     }
+     xyHoldAngle[0] = rollDeg; xyHoldAngle[1] = pitchDeg;
+ }
+--- /home/htic/Music/DroneForge/firmware/fc_matek_h743/source_snapshots/2026-11-21_v4.6-rev1_FLASHED/height_hold.h	2026-11-21 16:38:34.224561458 +0530
++++ src/height_hold.h	2026-11-21 17:28:31.859013904 +0530
+@@ -25,3 +25,4 @@
+ int heightHoldMode(void);                        /* -1 off, 0 hold, 1 take-off, 2 landing */
+ bool heightHoldOnGround(void);                   /* armed on the floor: the PID integrator must stay at zero */
+ int16_t heightHoldRcCommandThrottle(void);       /* what rcCommand[THROTTLE] would be for the hold's throttle */
++void heightHoldSetPosAid(int16_t fwdMm, int16_t rightMm, bool valid);   /* v4.7: the PC's visual-odometry position aid (MSP2_DF_POS_AID); used while younger than 0.3 s */
+diff --git a/src/main/msp/msp.c b/src/main/msp/msp.c
+index ca0fd6c..ab3939e 100644
+--- a/src/main/msp/msp.c
++++ b/src/main/msp/msp.c
+@@ -84,6 +84,7 @@
+ 
+ #include "flight/failsafe.h"
+ #include "flight/gps_rescue.h"
++#include "flight/height_hold.h"
+ #include "flight/imu.h"
+ #include "flight/mixer.h"
+ #include "flight/pid.h"
+@@ -2673,6 +2674,17 @@ static mspResult_e mspProcessInCommand(mspDescriptor_t srcDesc, int16_t cmdMSP,
+         break;
+ #endif
+ 
++#ifdef USE_EKF
++    case MSP2_DF_POS_AID:                    /* DroneForge v4.7: the PC's visual-odometry displacement from the hold point (drone axes) for the sideways hold */
++        if (dataSize >= 5) {
++            const int16_t fwdMm = (int16_t)sbufReadU16(src);
++            const int16_t rightMm = (int16_t)sbufReadU16(src);
++            const uint8_t flags = sbufReadU8(src);
++            heightHoldSetPosAid(fwdMm, rightMm, (flags & 1) != 0);
++        }
++        break;
++#endif
++
+     case MSP_SET_RAW_RC:
+ #ifdef USE_RX_MSP
+         {
+diff --git a/src/main/msp/msp_protocol_v2_betaflight.h b/src/main/msp/msp_protocol_v2_betaflight.h
+index b039def..6609343 100644
+--- a/src/main/msp/msp_protocol_v2_betaflight.h
++++ b/src/main/msp/msp_protocol_v2_betaflight.h
+@@ -29,6 +29,7 @@
+ #define MSP2_GET_LED_STRIP_CONFIG_VALUES    0x3008
+ #define MSP2_SET_LED_STRIP_CONFIG_VALUES    0x3009
+ #define MSP2_SENSOR_CONFIG_ACTIVE           0x300A
++#define MSP2_DF_POS_AID                     0x3F00    // DroneForge v4.7: the PC's visual-odometry position aid: int16 forward mm, int16 right mm, uint8 flags (bit0 valid)
+ 
+ // MSP2_SET_TEXT and MSP2_GET_TEXT variable types
+ #define MSP2TEXT_PILOT_NAME                      1

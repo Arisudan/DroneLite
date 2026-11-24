@@ -1,0 +1,98 @@
+--- height_hold_core.c	2026-11-13 14:01:52.737174780 +0530
++++ /home/htic/Music/DroneForge/firmware/fc_matek_h743/source_snapshots/2026-11-13_hybrid/height_hold_core.c	2026-11-13 14:24:43.059666239 +0530
+@@ -8,13 +8,13 @@
+ {
+     p->kp_z = 0.9923f; p->kv_z = 0.0538f; p->ki_z = 0.02f; p->i_max = 0.12f;
+     p->vz_lim = 0.4581f; p->climb_peak_frac = 0.45f; p->descent_peak_frac = 0.45f;
+-    p->thr_idle = 0.05f; p->thr_max = 0.81f; p->drop_max = 0.30f;
++    p->thr_idle = 0.05f; p->thr_max = 0.85f; p->drop_max = 0.30f;
+     p->overshoot_m = 0.12f; p->overshoot_vz = 0.45f; p->overshoot_cut = 0.08f;
+     p->height_min = 0.2f; p->height_max = 2.5f;
+     p->base_tau = 1.5f; p->base_follow_max = 0.06f; p->lift_vz = 0.05f; p->lift_m = 0.15f;
+-    p->takeoff_start_frac = 0.70f; p->takeoff_creep_per_s = 0.010f; p->takeoff_cap_frac = 1.15f; p->takeoff_fail_s = 3.0f;
++    p->takeoff_start_frac = 0.70f; p->takeoff_creep_per_s = 0.010f; p->takeoff_cap_frac = 1.40f; p->takeoff_fail_s = 3.0f;
+     p->land_rate = 0.12f; p->land_slow_rate = 0.06f; p->land_slow_below = 0.30f;
+-    p->touch_m = 0.07f; p->touch_s = 0.4f; p->idle_ramp_per_s = 1.0f; p->takeoff_ramp_per_s = 0.35f;
++    p->touch_m = 0.07f; p->touch_s = 0.4f; p->idle_ramp_per_s = 1.0f; p->takeoff_ramp_per_s = 0.35f; p->cap_land_s = 1.5f;
+ }
+ 
+ void hhEngage(hhState_t *s, const hhParams_t *p, float z, float f0, float vbat)
+@@ -82,10 +82,15 @@
+         if (s->f_cur < s->f_start) { s->f_cur += p->takeoff_ramp_per_s * dt; if (s->f_cur > s->f_start) s->f_cur = s->f_start; }
+         else s->f_cur += p->takeoff_creep_per_s * dt;
+         if (s->f_cur >= cap) { s->f_cur = cap; s->t_cap += dt; if (s->t_cap > p->takeoff_fail_s) s->fail = true; }
+-        if (!s->lifted && z > 0.02f && vz > p->lift_vz) { s->lifted = true; s->f_lift = s->f_cur; }      /* the throttle at which it really started to rise */
+-        if (z > p->lift_m) {                                    /* airborne: hand over to the hold, bumpless */
++        /* the throttle at which it really started to rise: a rise (z above 4 cm and vz above lift_vz) that lasts 0.3 s. One noisy speed sample at 0.5 throttle must not become the hover base (it left the hold 0.15 too low and stuck in ground effect). */
++        if (!s->lifted) {
++            if (z > 0.04f && vz > p->lift_vz) s->t_liftdet += dt; else s->t_liftdet = 0.0f;
++            if (s->t_liftdet >= 0.3f) { s->lifted = true; s->f_lift = s->f_cur; }
++        }
++        /* the range over-reads by ~9 cm at 6-30 cm, so a drone still at 11 cm real height can read 0.2 m */
++        if (z > p->lift_m) {                                    /* airborne: hand over to the hold, bumpless (an early handover on an over-reading sensor is recovered by the sank-back rule in the hold) */
+             /* the hover base is what PHYSICALLY lifted the drone (not the PC's reference, which depends on a voltage reading and a hover calibration) */
+-            s->f_base = clampf_(s->lifted ? s->f_lift : s->f_cur - 0.03f, p->thr_idle, p->thr_max); s->v0 = vb; s->base_learned = true;
++            s->f_base = clampf_(s->lifted ? s->f_lift : s->f_cur, p->thr_idle, p->thr_max); s->v0 = vb; s->base_learned = true;
+             const float base = s->f_base;
+             s->mode = HH_MODE_HOLD; s->t_mode = 0.0f; s->z_ref = z; s->vz_ff = 0.0f; s->trans = false; s->overshoot = false;
+             s->integ = clampf_(s->f_cur - base, -p->i_max, p->i_max);
+@@ -115,6 +120,17 @@
+         if (u >= 1.0f) { s->trans = false; s->vz_ff = 0.0f; s->z_ref = s->z_to; }
+     }
+     const float e = s->z_ref - z;
++    /* sank back onto the floor in the hold (handed over too early, or the throttle base was too low): go back to the take-off creep from the current throttle instead of holding on the floor forever */
++    if (s->mode == HH_MODE_HOLD) {
++        if (z < 0.04f && e > 0.15f && absf_(vz) < 0.10f) s->t_floor += dt; else s->t_floor = 0.0f;
++        if (s->t_floor >= 1.5f) {
++            s->mode = HH_MODE_TAKEOFF; s->t_mode = 0.0f; s->t_floor = 0.0f; s->t_cap = 0.0f; s->t_satur = 0.0f;
++            s->lifted = false; s->base_learned = false; s->trans = false; s->vz_ff = 0.0f; s->integ = 0.0f;
++            s->target_pending = clampf_(s->target, p->height_min, p->height_max);
++            s->f_cur = s->f_out; s->f_start = s->f_out;
++            return s->f_out;
++        }
++    }
+     const float vz_ref = clampf_(p->kp_z * e + s->vz_ff, -p->vz_lim, p->vz_lim);
+     /* thrust ~ V^2 * u^2  =>  u - idle scales with V0/V */
+     float scale = s->v0 / vb;
+@@ -138,6 +154,11 @@
+         }
+     }
+     f = clampf_(f, base - p->drop_max, p->thr_max);
++    /* thrust limit: the throttle is pinned at the cap and the drone is not climbing (weak pack, heavy drone, something holding it): a stronger demand cannot help, so land gently */
++    if (s->mode == HH_MODE_HOLD && p->cap_land_s > 0.0f) {
++        if (f >= p->thr_max - 0.005f && vz < 0.10f) s->t_satur += dt; else { s->t_satur -= dt; if (s->t_satur < 0.0f) s->t_satur = 0.0f; }
++        if (s->t_satur >= p->cap_land_s) { s->cap_landing = true; hhLand(s, p); }
++    }
+     s->f_out = f;
+     return f;
+ }
+--- height_hold_core.h	2026-11-13 14:01:52.737271697 +0530
++++ /home/htic/Music/DroneForge/firmware/fc_matek_h743/source_snapshots/2026-11-13_hybrid/height_hold_core.h	2026-11-13 14:24:43.059801420 +0530
+@@ -13,7 +13,7 @@
+     float vz_lim;                        /* 0.4581 m/s */
+     float climb_peak_frac, descent_peak_frac;   /* 0.45, 0.45 of vz_lim for height changes */
+     float thr_idle;                      /* 0.05 */
+-    float thr_max;                       /* absolute cap, e.g. 0.81 */
++    float thr_max;                       /* absolute cap: 0.85 (real flights: lift-off at 0.78-0.80, free-air hover 0.69-0.75; the old 0.81 left no margin) */
+     float drop_max;                      /* the output never goes more than this below the base throttle (0.30) */
+     float overshoot_m, overshoot_vz, overshoot_cut;   /* 0.12 m, 0.45 m/s, 0.08 */
+     float height_min, height_max;        /* 0.2 .. 2.5 m */
+@@ -30,6 +30,7 @@
+     float touch_m, touch_s;              /* 0.07 m for 0.4 s = touched down */
+     float idle_ramp_per_s;               /* 1.0: throttle fraction per second ramped to idle after touchdown */
+     float takeoff_ramp_per_s;            /* 0.35: throttle fraction per second from idle up to the creep start level (NEVER a step: Betaflight's throttle boost turns a throttle step into a full-throttle burst) */
++    float cap_land_s;  /* appended */              /* 1.5: in HOLD with the throttle pinned at thr_max and the drone not climbing for this long = the thrust limit is reached: land gently instead of fighting (0 = off) */
+ } hhParams_t;
+ 
+ enum { HH_MODE_HOLD = 0, HH_MODE_TAKEOFF = 1, HH_MODE_LAND = 2 };
+@@ -58,6 +59,10 @@
+     bool  lifted;
+     bool  base_learned;                  /* the hover base came from the physical lift-off: the PC's estimate is not followed any more */
+     float f_start;                       /* creep start level (reached by the ramp) */
++    float t_satur;                       /* time with the throttle at the cap and no climb (s) */
++    float t_liftdet;                     /* time the rise has lasted (s) */
++    float t_floor;                       /* time in the hold on the floor with the target above (s): sank back */
++    bool  cap_landing;                   /* the current landing was started by the thrust-limit rule */
+ } hhState_t;
+ 
+ void  hhDefaults(hhParams_t *p);
