@@ -123,6 +123,7 @@ class VisionEngine:
         self.on = {k: False for k in ENGINES}; self.state = {k: "off" for k in ENGINES}; self.text = {k: "" for k in ENGINES}; self.hz = {k: 0.0 for k in ENGINES}
         self._lock = threading.Lock(); self._stop = threading.Event(); self._thread: Optional[threading.Thread] = None; self._load_lock = threading.Lock(); self._threads = []
         self._da3 = self._vo = self._scrfd = self._arc = self._yolo = None; self._tracker = None; self._track_req = None
+        self._rects: dict = {}                                       # per worker thread: the O4 undistortion (1920x1080 -> the 640x480 pinhole the depth/VO models use)
         self.depth = None; self.depth_t = 0.0; self.obstacles = []; self.detections = []; self.faces = []; self.track_box = None; self.vo_pose = None
         self._anchor_req = False; self.anchor_t = 0.0; self.aid = None; self.aid_t = 0.0; self.vo_inliers = 0
         self.floor = None; self.pose = None                                           # floor-based DA3 scale (nimbus_depth_core.FloorScale) from the FC's height + attitude
@@ -240,6 +241,12 @@ class VisionEngine:
             if frame is None or t == last_t: time.sleep(0.003); continue
             last_t = t
             try:
+                if grp in ("depth", "vo") and frame.shape[:2] != (480, 640):          # the real O4 sends 1920x1080: rectify it for the models (as the map node does)
+                    rc = self._rects.get(grp)
+                    if rc is None or rc[0] != frame.shape[:2]:
+                        from nimbus_core.rectify import load_o4_rectifier
+                        rc = self._rects[grp] = (frame.shape[:2], load_o4_rectifier(frame.shape[1], frame.shape[0]))
+                    frame = rc[1](frame)
                 if grp == "depth": self._step_depth(frame, on, tick)
                 elif grp == "face": self._step_face(frame, on, tick)
                 elif grp == "track": self._track(frame, tick)

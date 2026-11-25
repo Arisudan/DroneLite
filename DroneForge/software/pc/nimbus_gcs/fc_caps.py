@@ -11,6 +11,7 @@ import time
 from nimbus_pc.commands import MSP2_DF_POS_AID, encode_msp_pos_aid
 
 PROBE_WAIT_S = 2.5
+SILENT_RETRY_S = 10.0       # a silent link is asked again every 10 s (2026-11-25: 6 lost replies disabled the aid for the whole session)
 PROBE_TRIES = 6           # 2026-11-23 real link: only ~1 in 10 MSP writes got its reply back over ELRS (0.7 s when it did): ask several times, accept a late answer
 
 TEXT = {"unknown": "position aid: checking the FC firmware",
@@ -31,14 +32,15 @@ class AidSupport:
             self._sess = None; self.state = "nolink"; return self.state
         if sess is not self._sess:                                        # a new radio session (reconnect, other FC): ask again
             self._sess = sess; self.state = "unknown"; self.tries = 0
-        if self.state in ("yes", "no", "silent"): return self.state
         now = self.clock()
+        if self.state in ("yes", "no") or (self.state == "silent" and now - self.t_probe < SILENT_RETRY_S): return self.state
+        if self.state == "silent": self.tries = 0
         if self.state == "probing":
             r = sess.take_msp_reply(MSP2_DF_POS_AID)
             if r is not None:
                 self.state = "yes" if len(r.get("payload", b"")) == 0 else "no"; return self.state
             if now - self.t_probe < PROBE_WAIT_S: return self.state
-            if self.tries >= PROBE_TRIES: self.state = "silent"; return self.state
+            if self.tries >= PROBE_TRIES: self.state = "silent"; self.t_probe = now; return self.state
         if self.tries == 0: sess.take_msp_reply(MSP2_DF_POS_AID)          # drop a reply from before this session's question (later: any answer counts)
         for fr in encode_msp_pos_aid(0.0, 0.0, False): sess.send_frame(fr)
         self.tries += 1; self.t_probe = now; self.state = "probing"
