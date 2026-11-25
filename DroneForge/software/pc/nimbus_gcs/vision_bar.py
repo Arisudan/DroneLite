@@ -85,7 +85,7 @@ class VisionBar(QWidget):
         if self._msg and ("Saved" in self._msg or "No face" in self._msg or "Type a name" in self._msg): parts.insert(0, self._msg)
         txt = "   \u00b7   ".join(p for p in parts if p) or "Vision off. The models run on this PC on the live video."
         core = self.win.model.core
-        core.vo_status = {"anchor": bool(e.on["vo"] and e.has_anchor()), "fresh": bool(e.on["vo"] and e.fresh_aid() is not None), "text": (parts[-1] if (e.on["vo"] and parts) else "")}
+        core.vo_status = {"anchor": bool(e.on["vo"] and e.has_anchor()), "fresh": bool(e.on["vo"] and e.fresh_aid() is not None), "text": (parts[-1] if (e.on["vo"] and parts) else ""), "state": e.state.get("vo", ""), "hz": round(float(e.hz.get("vo", 0.0) or 0.0), 1), "msg": e.text.get("vo", "")}
         self.note.setText(txt); self.note.setStyleSheet(f"color:{T.AMB if warn else (T.TXT if parts else T.DIM)}")
 
     def _aid(self) -> str:

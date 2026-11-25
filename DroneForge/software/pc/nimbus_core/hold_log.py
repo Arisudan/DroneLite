@@ -12,7 +12,7 @@ from typing import Optional
 
 COLS = ["t_s", "source", "phase", "fc_armed", "fc_mode", "explore", "sent_arm", "sent_height_us", "sent_mode_us", "sent_aid_fwd_us", "sent_aid_right_us", "sent_aid_valid_us",
         "core_aid_fwd_m", "core_aid_right_m", "core_aid_age_s", "fc_ch5_us", "fc_height_us", "fc_mode_us", "fc_aid_fwd_us", "fc_aid_right_us", "fc_aid_valid_us", "fc_rc_age_s",
-        "fc_vfwd_mps", "fc_vright_mps", "range_m", "pitch_deg", "roll_deg", "vo_anchor", "vo_fresh_aid", "vo_text"]
+        "fc_vfwd_mps", "fc_vright_mps", "range_m", "pitch_deg", "roll_deg", "vo_anchor", "vo_fresh_aid", "vo_text", "vo_state", "vo_hz", "vo_msg", "mode_tile"]
 DEFAULT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..", "docs", "status_logs", "hold_live")
 
 
@@ -68,6 +68,6 @@ class HoldLog:
                          f(aid[0]) if aid else None, f(aid[1]) if aid else None, f(now - aid[2], 2) if aid else None,
                          at(4), at(8), at(10), at(12), at(13), at(14), f(rc_age, 1),
                          f(kin.get("vx_mps")), f(kin.get("vy_mps")), f(rg.get("distance_m")), deg(att.get("pitch_rad")), deg(att.get("roll_rad")),
-                         int(bool(vo.get("anchor"))), int(bool(vo.get("fresh"))), vo.get("text", "")])
+                         int(bool(vo.get("anchor"))), int(bool(vo.get("fresh"))), vo.get("text", ""), vo.get("state", ""), vo.get("hz", ""), vo.get("msg", ""), getattr(c.autonomy, "flight_mode", "")])
         self.rows += 1
         if self.rows % 20 == 0: self.f.flush()

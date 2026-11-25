@@ -39,6 +39,9 @@ def decode_blockers(payload: bytes) -> Optional[list]:
     return [ARMING_NAMES[i] for i in range(len(ARMING_NAMES)) if flags >> i & 1]
 
 
+ARMED_PERIOD_S = 3.0
+
+
 class RadioFcProbe:
     def __init__(self, session, period_s: float = 0.5, timeout_s: float = 0.3) -> None:
         self.sess, self.period, self.timeout = session, period_s, timeout_s
@@ -52,6 +55,7 @@ class RadioFcProbe:
         self.rc_rtt_s: Optional[float] = None
         self.rc_requests = self.rc_replies = 0
         self._rc_times: deque = deque(maxlen=20)
+        self.armed = False                      # set by the core every tick: while armed the probe is nearly silent (every MSP reply takes telemetry slots from the 0xD6 state frames)
         self._stop = threading.Event()
         self._thread: Optional[threading.Thread] = None
 
@@ -86,7 +90,7 @@ class RadioFcProbe:
         n = 0
         while not self._stop.is_set():
             try:
-                r = self._ask((105, 104, 105, 150)[n % 4])
+                r = self._ask(105 if self.armed else (105, 104, 105, 150)[n % 4])          # armed: only the channel read-back (the hold log needs it), nothing else
             except OSError:                       # the radio dongle went away (unplugged, reset, or the GCS is closing): stop quietly, the link watchdog reports it
                 self._stop.set(); break
             if r:
@@ -104,4 +108,4 @@ class RadioFcProbe:
                     if b is not None:
                         self.blockers = b
             n += 1
-            self._stop.wait(self.period)
+            self._stop.wait(ARMED_PERIOD_S if self.armed else self.period)

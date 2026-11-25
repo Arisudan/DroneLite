@@ -321,6 +321,7 @@ class NimbusCore:
             send = Controls(roll=c.roll, pitch=c.pitch, yaw=c.yaw, throttle=(c.throttle * self.bench_scale) if c.arm else 0.0, arm=c.arm,
                             aux2=CRSF_MAX, aux3=c.aux3)
         self.last_sent = send
+        if self.probe is not None: self.probe.armed = bool(self.autonomy.fc_armed or send.arm)
         try: self.hold_log.sample(send)
         except Exception as e: self.event(f"hold log stopped: {e}"); self.hold_log.close(); self.hold_log.sample = lambda *_: None          # noqa: BLE001  (a log problem never touches the flight path)
         self.sess.set_controls(send)

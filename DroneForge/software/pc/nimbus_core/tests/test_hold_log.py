@@ -26,3 +26,14 @@ class TestHoldLog(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestProbeQuietWhenArmed(unittest.TestCase):
+    def test_probe_asks_less_when_armed(self):
+        import time
+        from nimbus_core.radio_fc import RadioFcProbe, ARMED_PERIOD_S
+        class S:
+            n = []
+            def request_msp(self, cmd, timeout=0.3): S.n.append(cmd); return None
+        p = RadioFcProbe(S(), period_s=0.01); p.armed = True; p.start(); time.sleep(0.3); p.stop()
+        self.assertLessEqual(len(S.n), 2); self.assertTrue(all(c == 105 for c in S.n)); self.assertGreater(ARMED_PERIOD_S, 1.0)
