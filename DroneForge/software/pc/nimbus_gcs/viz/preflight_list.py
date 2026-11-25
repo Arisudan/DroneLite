@@ -1,8 +1,8 @@
 """PreflightList: header, check rows (ok / caution / blocking) and an advisory footnote."""
 from __future__ import annotations
 
-from PyQt6.QtCore import QRectF, QSize, Qt, pyqtSignal
-from PyQt6.QtGui import QFontMetrics
+from PyQt6.QtCore import QPointF, QRectF, QSize, Qt, pyqtSignal
+from PyQt6.QtGui import QFontMetrics, QPen
 from PyQt6.QtWidgets import QSizePolicy, QWidget
 
 from .. import theme as T
@@ -27,7 +27,10 @@ class PreflightList(QWidget):
         self._rows = [tuple(r) for r in rows]; self._fit(); self.update()
 
     def ready_count(self) -> int:
-        return sum(1 for r in self._rows if r[3] != "blocking")
+        return sum(1 for r in self._rows if r[3] not in ("blocking", "info"))
+
+    def total_count(self) -> int:
+        return sum(1 for r in self._rows if r[3] != "info")                       # an "info" row is a reading (FC armed), not a check
 
     def set_compact(self, on: bool) -> None:
         """Small windows: 24 px rows and no footnote line."""
@@ -37,11 +40,11 @@ class PreflightList(QWidget):
         return HEAD_H + 8 + row_h * len(self._rows) + (32 if foot else 4)
 
     def _fit(self) -> None:
-        """Minimum = 22 px rows (was 24: the 12th check, 2026-11-25), no footnote; the rows stretch (22..40 px) with the height the column gives, the footnote shows only if room is left."""
-        self.setMinimumHeight(self.min_height_for(22, False))
+        """Minimum = 24 px rows, no footnote; the rows stretch (24..40 px) with the height the column gives, the footnote shows only if room is left."""
+        self.setMinimumHeight(self.min_height_for(24, False))
         self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding)
         n = max(1, len(self._rows)); h = self.height()
-        self._row_h = max(22, min(ROW_H + 2, (h - HEAD_H - 12) // n)) if h > 0 else 22
+        self._row_h = max(24, min(ROW_H + 2, (h - HEAD_H - 12) // n)) if h > 0 else 24
         self._foot = h - HEAD_H - 8 - self._row_h * n >= 30
 
     def resizeEvent(self, e):
@@ -71,7 +74,7 @@ class PreflightList(QWidget):
     def paintEvent(self, _):
         p = new_painter(self); W = self.width()
         draw_text(p, 0, 12, "PRE-FLIGHT", T.f_label(11), T.DIM)
-        draw_text(p, W, 14, f"{self.ready_count()} of {len(self._rows)} ready", T.f_body(13), T.TXT, "r")
+        draw_text(p, W, 14, f"{self.ready_count()} of {self.total_count()} ready", T.f_body(13), T.TXT, "r")
         y = HEAD_H + 8
         hline(p, 0, W, y - 8, T.HAIR)
         for i, (rid, label, state, level) in enumerate(self._rows):
@@ -86,10 +89,14 @@ class PreflightList(QWidget):
                 icon_tri(p, 12, cy, T.AMB); sc, tf = T.AMB, T.f_body(12); tf.setWeight(tf.Weight.DemiBold); lc = T.TXT
             elif level == "blocking":
                 icon_cross(p, 12, cy, T.RED); sc, tf = T.RED, T.f_body(12); tf.setWeight(tf.Weight.Bold); lc = T.TXT
+            elif level == "info":                                                              # a reading: a ring (hollow = disarmed, filled = armed), no tick, no READY
+                armed = state.strip().upper() == "ARMED"
+                p.setPen(QPen(col(T.TXT if armed else T.DIM), 1.6)); p.setBrush(col(T.TXT) if armed else Qt.BrushStyle.NoBrush); p.drawEllipse(QPointF(12, cy), 4.5, 4.5)
+                sc, tf = (T.TXT if armed else T.DIM), T.f_label(10); lc = col(T.TXT, 220)
             else:
                 icon_check(p, 12, cy, T.DIM); sc, tf = T.FAINT, T.f_label(10); lc = col(T.TXT, 220)
             lf = T.f_body(13 if self._row_h < 34 else 14); draw_text(p, 32, cy + 5, label, lf, lc)
-            txt = state.upper() if level == "ok" else state
+            txt = state.upper() if level in ("ok", "info") else state
             room = W - 8 - (32 + QFontMetrics(lf).horizontalAdvance(label) + 14)               # never run into the label: elide the reading to what is left
             txt = QFontMetrics(tf).elidedText(txt, Qt.TextElideMode.ElideRight, max(40, int(room)))
             draw_text(p, W - 8, cy + 5, txt, tf, sc, "r")

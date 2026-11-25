@@ -22,12 +22,11 @@ class TestPreflight(unittest.TestCase):
         self.assertTrue(all(c.ok for c in evaluate_preflight(GOOD)))
 
     def test_table(self):
-        # (override, check id, ok, blocking): only connection, armed state, a running flight and a safety latch block
+        # (override, check id, ok, blocking): only the (hidden) connection and running-flight gates, the safety latch and a drone that is not on the floor block
         rows = [
             (dict(connected=False), "connected", False, True),
-            (dict(link_lq=79), "link", False, False), (dict(link_lq=80), "link", True, False), (dict(link_lq=None), "link", False, False),
             (dict(telemetry_age_s=1.0), "telemetry", False, False), (dict(telemetry_age_s=None), "telemetry", False, False),
-            (dict(fc_armed=True), "disarmed", False, True),
+            (dict(fc_armed=True), "fc_armed", True, False), (dict(fc_armed=False), "fc_armed", True, False),                  # a reading only: never fails, never blocks
             (dict(rest_tilt_deg=0.49), "rest_tilt", True, False), (dict(rest_tilt_deg=1.0), "rest_tilt", False, False), (dict(rest_tilt_deg=1.6), "rest_tilt", False, False),
             (dict(range_m=0.01), "range", False, False), (dict(range_m=0.15), "range", True, False), (dict(range_m=0.16), "range", False, True), (dict(range_m=0.2), "range", False, True), (dict(range_m=None), "range", False, False), (dict(range_age_s=2.0), "range", False, False),
             (dict(autonomy_idle=False), "autonomy_idle", False, True),
@@ -39,6 +38,20 @@ class TestPreflight(unittest.TestCase):
         for over, cid, ok, blocking in rows:
             c = verdict(**over)[cid]
             self.assertEqual((c.ok, c.blocking), (ok, blocking), (over, cid, c))
+
+    def test_removed_and_hidden_rows(self):
+        v = verdict()
+        self.assertNotIn("link", v)                                                                              # "Radio link quality >= 80" is gone (2026-11-25)
+        for gate in ("connected", "autonomy_idle"):                                                              # not listed, but still gate arming
+            self.assertTrue(v[gate].hidden and v[gate].blocking)
+        self.assertEqual((v["fc_armed"].label, v["fc_armed"].info, v["fc_armed"].blocking), ("FC armed", True, False))
+
+    def test_fc_armed_shows_what_the_fc_itself_reports(self):
+        self.assertEqual(verdict(fc_armed=True)["fc_armed"].detail, "armed")
+        self.assertEqual(verdict(fc_armed=False)["fc_armed"].detail, "disarmed")
+        self.assertEqual(verdict(telemetry_age_s=None)["fc_armed"].detail, "no FC response")                   # no telemetry: it does not claim "disarmed"
+        self.assertEqual(verdict(telemetry_age_s=5.0)["fc_armed"].detail, "no FC response")
+        self.assertEqual(verdict(simulated=True, telemetry_age_s=None, fc_armed=True)["fc_armed"].detail, "armed")
 
     def test_simulated_skips_hardware_checks(self):
         v = verdict(simulated=True, link_lq=None, telemetry_age_s=None, rest_tilt_deg=None, range_m=None, range_age_s=None, fc_usb=True)

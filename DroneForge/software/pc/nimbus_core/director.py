@@ -39,6 +39,8 @@ class Check:
     blocking: bool          # True: when ok is False this check refuses arm/take-off (only connection, armed state, a running flight, safety latch); False: warning only
     fix_hint: str = ""      # one human sentence on how to fix it
     goto: Optional[tuple] = None   # (workspace, sub-tab) the GUI opens to fix it; None = nothing to open
+    hidden: bool = False    # 2026-11-25: evaluated (and blocking) but not shown in the list and not counted (connected, no flight in progress)
+    info: bool = False      # 2026-11-25: shown as a plain reading only (FC armed / disarmed): never blocks, never counts towards READY
 
 
 @dataclass(frozen=True)
@@ -67,7 +69,8 @@ HINTS = {   # check id -> (fix_hint, goto)
     "connected": ("Connect the radio dongle and press Connect.", ("SETTINGS", "Settings")),
     "link": ("Move closer to the drone or check the transmitter and receiver.", ("SETUP", "Radio")),
     "telemetry": ("Wait a moment; if it stays, check the radio link and the FC power.", ("SETUP", "Radio")),
-    "disarmed": ("Press SAFE to disarm the flight controller.", None),
+    "fc_armed": ("What the flight controller itself reports. Press SAFE to disarm.", None),
+    "autonomy_idle": ("Wait for the running flight or test to finish, or press SAFE.", None),
     "rest_tilt": ("Place the drone on a level surface, then SETUP > Calibration > Level.", ("SETUP", "Calibration")),
     "range": ("Put the drone on the floor (not on a stand or a box) and check the range sensor is clear.", ("SETUP", "Sensors")),
     "rc_channels": ("Open DIAGNOSTICS and run the channel test; if CH13-16 are not carried set ELRS to 100Hz Full + 16ch.", ("DIAGNOSTICS", "Diagnostics")),
@@ -84,13 +87,12 @@ def evaluate_preflight(st: dict) -> list[Check]:
     autonomy_idle, safety_latch (str|None), battery_v, fc_usb (bool), height_m (the height setting), ceiling_m."""
     sim = bool(st.get("simulated"))
     out: list[Check] = []
-    add = lambda i, lab, ok, det, blocking=True: out.append(Check(i, lab, bool(ok), det, blocking))
-    add("connected", "Connected to the drone", st.get("connected"), "connected" if st.get("connected") else "not connected")
-    lq = st.get("link_lq")
-    add("link", f"Radio link quality >= {LQ_MIN:.0f}", sim or (lq is not None and lq >= LQ_MIN), "simulated" if sim else ("no link data" if lq is None else f"LQ {lq:.0f}"), blocking=False)
+    add = lambda i, lab, ok, det, blocking=True, hidden=False, info=False: out.append(Check(i, lab, bool(ok), det, blocking, hidden=hidden, info=info))
+    add("connected", "Connected to the drone", st.get("connected"), "connected" if st.get("connected") else "not connected", hidden=True)       # still gates arming, no longer listed
     age = st.get("telemetry_age_s")
     add("telemetry", "FC telemetry fresh", sim or (age is not None and age < TELEM_FRESH_S), "simulated" if sim else ("no telemetry" if age is None else f"{age:.1f} s old"), blocking=False)
-    add("disarmed", "FC disarmed", not st.get("fc_armed"), "armed" if st.get("fc_armed") else "disarmed")
+    fc_known = sim or (age is not None and age < 3.0)                                   # what the FC itself last reported (its flight-mode text: a * = disarmed), not what the GCS asked for
+    add("fc_armed", "FC armed", True, ("armed" if st.get("fc_armed") else "disarmed") if fc_known else "no FC response", blocking=False, info=True)
     tilt = st.get("rest_tilt_deg")
     if sim:
         add("rest_tilt", "Drone level at rest", True, "simulated")
@@ -105,7 +107,7 @@ def evaluate_preflight(st: dict) -> list[Check]:
     add("range", "Range sensor reads the ground", sim or (r is not None and fresh and lo <= r <= hi),
         "simulated" if sim else ("no range data" if r is None or not fresh else f"{r:.3f} m" + ("" if lo <= r <= hi else (f" (expected {lo}-{hi} m): the drone is not on the floor, put it on the floor" if on_something else f" (expected {lo}-{hi} m)"))),
         blocking=on_something)
-    add("autonomy_idle", "No flight in progress", st.get("autonomy_idle"), "idle" if st.get("autonomy_idle") else "a flight or test is running")
+    add("autonomy_idle", "No flight in progress", st.get("autonomy_idle"), "idle" if st.get("autonomy_idle") else "a flight or test is running", hidden=True)    # still gates arming, no longer listed
     latch = st.get("safety_latch")
     add("safety", "No safety latch", not latch, f"latched: {latch}" if latch else "clear")
     bv = st.get("battery_v")
@@ -198,7 +200,8 @@ class FlightDirector:
     def preflight_summary(self) -> tuple:
         """(n_ok, n_total, cautions): cautions = failing checks that do not block (warnings)."""
         cs = self._pf if self._pf is not None else self.preflight()
-        return sum(c.ok for c in cs), len(cs), sum(1 for c in cs if not c.ok and not c.blocking)
+        shown = [c for c in cs if not c.hidden and not c.info]                             # the hidden gates and the FC armed reading are not part of "N of M ready"
+        return sum(c.ok for c in shown), len(shown), sum(1 for c in shown if not c.ok and not c.blocking)
 
     def _pf_flip(self, cs) -> None:
         """Publish the checklist on T.PREFLIGHT only when a check flips; notify about checks that turned bad / good."""
@@ -211,7 +214,7 @@ class FlightDirector:
         if old and self.core.connected:
             for c in cs:
                 o = old.get(c.id)
-                if c.id == "connected" or o is None or o[1] == c.ok:
+                if c.id == "connected" or c.hidden or c.info or o is None or o[1] == c.ok:
                     continue
                 if not c.ok:
                     self.core.notify(f"{c.label}: {c.detail}", "caution", "preflight")

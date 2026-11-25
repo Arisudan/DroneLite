@@ -221,8 +221,7 @@ class TestNavigationAndLayout(unittest.TestCase):
             ids = {c.id: c for c in f._checks}
             self.assertFalse(ids["range"].ok)
             f.preflight.row_clicked.emit("range"); self.assertEqual((w.current_workspace(), w.setup_page.nav.current()), ("SETUP", "sensors"))
-            w.goto("FLY"); f.preflight.row_clicked.emit("link"); self.assertEqual(w.setup_page.nav.current(), "radio")
-            w.goto("FLY"); f.preflight.row_clicked.emit("disarmed"); self.assertEqual(w.current_workspace(), "FLY")      # no goto: stays
+            w.goto("FLY"); f.preflight.row_clicked.emit("fc_armed"); self.assertEqual(w.current_workspace(), "FLY")      # info row, no goto: stays
         finally:
             w.model.disconnect(); w.close()
 
@@ -499,7 +498,7 @@ class TestFlyPage(unittest.TestCase):
         import dataclasses                                       # measured flight profile set BEFORE the simulator is built (the tests' temporary settings are the unmeasured defaults, hover 0.42)
         _au = w.model.core.director._au; w.model.core.director.apply_settings(dataclasses.replace(_au.settings, thr_hover0=0.63, batt_ref_v=13.8, measured=True), persist=False)
         w.model.connect_sim(); _spin(5, lambda: f.director.state().phase == "ready"); _spin(0.5)         # the GUI button was removed; the model-level simulator still backs this test
-        self.assertEqual(f.preflight._rows.__len__(), len(f.director.preflight()))
+        self.assertEqual(f.preflight._rows.__len__(), len([c for c in f.director.preflight() if not c.hidden]))
         self.assertTrue(f.btn_main.is_ready()); self.assertEqual(f.btn_main.label(), "ARM"); self.assertFalse(f.btn_land.is_ready()); self.assertFalse(f.btn_disarm.is_ready())
         f.height_field.set_value(0.5)
         f.btn_main.trigger()                                                           # ARM (hold time is 0 in tests)

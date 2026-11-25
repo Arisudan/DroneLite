@@ -27,7 +27,7 @@ def _c(tok: str, a: int = 255) -> QColor:
 class ModeTile(QAbstractButton):
     def __init__(self, text: str, sub: str = "", icon: str = "", parent=None) -> None:
         super().__init__(parent)
-        self.setText(text); self.sub = sub; self.icon = icon; self.active = False; self.compact = False; self._hover = False
+        self.setText(text); self.sub = sub; self.icon = icon; self.active = False; self.pending = False; self.compact = False; self._hover = False
         self.setCursor(Qt.CursorShape.PointingHandCursor); self.setMouseTracking(True)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed); self.setFixedHeight(64)
         self._t0 = time.monotonic(); self._anim = QTimer(self); self._anim.setInterval(33); self._anim.timeout.connect(self.update)
@@ -36,6 +36,10 @@ class ModeTile(QAbstractButton):
     def set_active(self, on: bool) -> None:
         if on != self.active:
             self.active = on; self._sync_anim(); self.update()
+
+    def set_pending(self, on: bool) -> None:
+        """Pressed and sent, the FC has not confirmed yet: an accent outline, no fill (cleared when the FC reports)."""
+        if on != self.pending: self.pending = on; self.update()
 
     def set_sub(self, s: str) -> None:
         if s != self.sub: self.sub = s; self.update()
@@ -76,9 +80,10 @@ class ModeTile(QAbstractButton):
         p = QPainter(self); p.setRenderHint(QPainter.RenderHint.Antialiasing)
         W, H = self.width(), self.height(); en = self.isEnabled(); act = self.active and en
         down = self.isDown() and en
-        depth = 0.0 if not en else (1.0 if (act or down) else (DEPTH + (1.0 if self._hover else 0.0)))
-        top = DEPTH + 1.0 - depth                                                    # the face sinks as the depth shrinks
+        depth = DEPTH if en else 0.0                                                 # the same geometry in EVERY state: nothing moves when a tile is pressed, connected or active
+        top = 1.0
         face = QRectF(2, top, W - 4, H - DEPTH - 3)
+        if down: face.translate(0, 1.0)                                              # a press: 1 px only, text moves with it
         if en:
             sh = QRectF(face.x() + 1, face.y() + depth + 2, face.width() - 2, face.height())       # soft drop shadow
             for k, a in ((3, 26), (2, 34), (1, 46)):
@@ -92,11 +97,12 @@ class ModeTile(QAbstractButton):
         g = QLinearGradient(face.topLeft(), face.bottomLeft())
         if act: g.setColorAt(0, _c(theme.ACC)); g.setColorAt(1, _c(theme.ACC_DEEP))
         elif en:
-            g.setColorAt(0, _c(theme.HAIR2 if self._hover else theme.HAIR)); g.setColorAt(1, _c(theme.PANEL))
+            g.setColorAt(0, _c(theme.HAIR2 if (self._hover or down) else theme.HAIR)); g.setColorAt(1, _c(theme.PANEL))
         else: g.setColorAt(0, _c(theme.PANEL)); g.setColorAt(1, _c(theme.PANEL))
         pen = QPen(_c(theme.HAIR2), 1)
         if not en: pen.setStyle(Qt.PenStyle.DashLine)
         elif act: pen = QPen(_c(theme.ACC), 1)
+        elif self.pending: pen = QPen(_c(theme.ACC), 2)
         p.setPen(pen); p.setBrush(g); p.drawRoundedRect(face, RAD, RAD)
         if en:                                                                       # top highlight
             hl = QPainterPath(); hl.addRoundedRect(face.adjusted(1.5, 1.5, -1.5, -face.height() * 0.55), RAD - 1.5, RAD - 1.5)

@@ -97,7 +97,7 @@ class TestPreflightTopic(unittest.TestCase):
         self.assertEqual(cs["rest_tilt"].goto, ("SETUP", "Calibration"))
         self.assertIn("Level", cs["rest_tilt"].fix_hint)
         self.assertEqual(cs["range"].goto, ("SETUP", "Sensors"))
-        self.assertEqual(cs["link"].goto, ("SETUP", "Radio"))
+        self.assertEqual(cs["rc_channels"].goto[0], "DIAGNOSTICS")
         self.assertEqual(cs["battery"].goto, ("SETTINGS", "Settings"))
         self.assertIsNone(cs["fc_usb"].goto)
         self.assertEqual(cs["ceiling"].goto, ("SETTINGS", "Settings"))
@@ -105,9 +105,9 @@ class TestPreflightTopic(unittest.TestCase):
         self.assertTrue(all(c.fix_hint for c in cs.values()))
 
     def test_sig_ignores_numbers(self):
-        a = _check_sig(evaluate_preflight(dict(GOOD, link_lq=97)))
-        self.assertEqual(a, _check_sig(evaluate_preflight(dict(GOOD, link_lq=98))))
-        self.assertNotEqual(a, _check_sig(evaluate_preflight(dict(GOOD, link_lq=10))))
+        a = _check_sig(evaluate_preflight(dict(GOOD, telemetry_age_s=0.1)))
+        self.assertEqual(a, _check_sig(evaluate_preflight(dict(GOOD, telemetry_age_s=0.2))))
+        self.assertNotEqual(a, _check_sig(evaluate_preflight(dict(GOOD, telemetry_age_s=9.0))))
 
 
 class TestLifecycleSim(unittest.TestCase):
@@ -150,7 +150,7 @@ class TestLifecycleSim(unittest.TestCase):
         self.assertEqual((r.ok, r.status), (False, "denied"))
         self.assertEqual(d.command_status(r.command_id).status, "denied")
         ok, total, cautions = d.preflight_summary()
-        self.assertEqual(total, 12); self.assertLessEqual(ok, total); self.assertIsInstance(cautions, int)      # 12 since 2026-11-25 (the RC channel row)
+        self.assertEqual(total, 8); self.assertLessEqual(ok, total); self.assertIsInstance(cautions, int)      # 12 since 2026-11-25 (the RC channel row)
 
     def test_arm_timeout_no_retry(self):
         d = self.core.director

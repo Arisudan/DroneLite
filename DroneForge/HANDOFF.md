@@ -105,3 +105,8 @@ source /opt/ros/jazzy/setup.bash && cd gazebo && ./run_house.sh --gui          #
 3. Run the house sim with the GUI up, open the GCS Video page, and confirm the 2D map appears. Report what you saw, honestly.
 4. Ask the owner for the camera calibration result, then continue with step 2 (FC position frame/sign check, read-only) only on their instruction.
 5. Do not build v4.7 firmware, flash, or arm unless told. Keep every reply crisp.
+
+## 5x (2026-11-25) pre-flight list + flight-mode tiles + redesign mock-ups
+- Pre-flight: "Connected to the drone" and "Radio link >= 80" rows removed from the list; `connected` and `autonomy_idle` stay as HIDDEN blocking gates (Check.hidden). "FC disarmed" renamed **FC armed**: info-only row (Check.info) showing ARMED / DISARMED from the FC's own flight-mode text, "no FC response" without fresh telemetry; never blocks, not counted in "N of M ready". Files: nimbus_core/director.py, nimbus_gcs/fly_page.py, viz/preflight_list.py (+ tests).
+- Flight-mode tiles (components/mode_tile.py): geometry is identical in every state (the active tile no longer drops 3 px), a press moves 1 px, new pending outline (set_pending) from click until the FC reports (or 3 s); EXPLORE-queued uses the same outline.
+- Redesign mock-ups: ~/Pictures/GCS_redesign_2026-11-25/ (5 versions x 6 tabs + overview + README; generator in _html/). No GCS code involved.

@@ -184,7 +184,7 @@ class FlyPage(QWidget):
         mm = self.mode_card.layout().contentsMargins(); mode_x = mm.top() + mm.bottom() + 20 + (1 if on else 3) * self.mode_card.body.spacing()      # the mode card: margins, title, gaps
         mode_rows = mode_btn0 if on else (mode_btn0 + mode_txt0)                                                                              # ALT | POS | EXPLORE tiles in one row; compact: no text
         fixed = main0 + act0 + why_h + fld0 + card_x + mode_rows + mode_x + 2 + (6 if not on else 0) + sl.spacing() * (5 if why_h else 4)
-        pf_min = self.preflight.min_height_for(22, False)
+        pf_min = self.preflight.min_height_for(24, False)
         self.side.min_h = int(fixed + pf_min)
         extra = max(0, side_h - fixed - pf_min)
         pf_x = min(extra * 0.5, 16 * n + 32); rest = extra - pf_x
@@ -298,6 +298,9 @@ class FlyPage(QWidget):
         res = self.director.set_mode(mode)
         if res.ok:
             self.status.setText(res.message)               # the description sits once, under the MODE buttons
+            if self._mode_sig and self._mode_sig[0] != mode and mode in self.mode_btns:
+                from PyQt6.QtCore import QTimer
+                b = self.mode_btns[mode]; b.set_pending(True); QTimer.singleShot(3000, lambda b=b: b.set_pending(False))     # outline until the FC reports (or 3 s)
         else:
             self.say(res)
 
@@ -318,7 +321,7 @@ class FlyPage(QWidget):
             return
         self._explore_sig = sig
         b = self.btn_explore; b.setEnabled(can)
-        b.setText("\u25cf EXPLORE" if on else ("\u25d4 EXPLORE" if pend else "EXPLORE")); b.set_active(on or pend)
+        b.setText("\u25cf EXPLORE" if on else ("\u25d4 EXPLORE" if pend else "EXPLORE")); b.set_active(on); b.set_pending(pend and not on)
         b.set_sub(f"steering {hz:.0f} Hz" if on else ("starts at HOLDING" if pend else ("explorer steers" if can else "after take-off")))
         b.setToolTip("EXPLORE: the PC explorer steers through the map while the FC holds the height. Pressed during the climb it starts by itself when the FC holds; press again to cancel" if can else "Available from take-off on")
         if on:
@@ -339,6 +342,7 @@ class FlyPage(QWidget):
         self._mode_sig = sig
         for m, lab, _ in MODES:
             b, on = self.mode_btns[m], m == cur
+            b.set_pending(False)
             b.setText(("● " if on else "") + lab); b.setEnabled(connected); b.set_active(on and connected)
         self.mode_card.set_meta(MODE_LABEL[cur] if connected else "")
         expl = next(e for m, _, e in MODES if m == cur)
@@ -386,6 +390,10 @@ class FlyPage(QWidget):
             self._sig = sig
             rows = []
             for c in checks:
+                if c.hidden:
+                    continue                                                       # a gate, not a row (connected, no flight in progress)
+                if c.info:
+                    rows.append((c.id, c.label, (c.detail or "").upper(), "info")); continue      # FC armed / disarmed: a reading, never READY / not ready
                 _g, level = check_mark(c.ok, c.blocking)
                 state = "ready" if c.ok else (c.detail or "check")
                 rows.append((c.id, c.label, state, level))
