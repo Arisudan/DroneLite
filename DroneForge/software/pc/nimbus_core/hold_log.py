@@ -12,7 +12,7 @@ from typing import Optional
 
 COLS = ["t_s", "source", "phase", "fc_armed", "fc_mode", "explore", "sent_arm", "sent_height_us", "sent_mode_us", "sent_aid_fwd_us", "sent_aid_right_us", "sent_aid_valid_us",
         "core_aid_fwd_m", "core_aid_right_m", "core_aid_age_s", "fc_ch5_us", "fc_height_us", "fc_mode_us", "fc_aid_fwd_us", "fc_aid_right_us", "fc_aid_valid_us", "fc_rc_age_s",
-        "fc_vfwd_mps", "fc_vright_mps", "range_m", "pitch_deg", "roll_deg", "vo_anchor", "vo_fresh_aid", "vo_text", "vo_state", "vo_hz", "vo_msg", "mode_tile"]
+        "fc_vfwd_mps", "fc_vright_mps", "range_m", "pitch_deg", "roll_deg", "vo_anchor", "vo_fresh_aid", "vo_text", "vo_state", "vo_hz", "vo_msg", "mode_tile", "safety_latch", "events"]
 DEFAULT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..", "docs", "status_logs", "hold_live")
 
 
@@ -26,12 +26,15 @@ class HoldLog:
         self.explicit = directory is not None          # the real log folder is written only by a live radio session (tests, the simulator and the bench do not litter it)
         self.f = None; self.w = None; self.path: Optional[str] = None; self.t0 = 0.0; self._last = 0.0; self.rows = 0; self.last: dict = {}
         from nimbus_core import topics as T
-        core.bus.subscribe(T.TELEMETRY, self._on_tel)
+        core.bus.subscribe(T.TELEMETRY, self._on_tel); core.bus.subscribe(T.EVENT, self._on_event); self.events: list = []
 
     def _on_tel(self, msg) -> None:
         name, d = msg
         if name in ("kinematic", "attitude", "optrange", "flight_mode"):
             self.last[name] = d
+
+    def _on_event(self, text) -> None:
+        self.events.append(str(text)[:160]); del self.events[:-12]          # every GCS event line (SAFETY, LAND, FLIGHT MODE, ...) lands in the next row
 
     def _open(self) -> None:
         os.makedirs(self.dir, exist_ok=True)
@@ -50,7 +53,7 @@ class HoldLog:
         if not getattr(c, "connected", False) or (not self.explicit and getattr(c, "state_source", "") != "live"):
             self.close(); return
         now = self.clock(); armed = bool(getattr(c.autonomy, "fc_armed", False))
-        if now - self._last < (0.1 if (armed or getattr(sent, "arm", False)) else 1.0): return
+        if now - self._last < (0.1 if (armed or getattr(sent, "arm", False)) else 1.0) and not self.events: return
         self._last = now
         if self.f is None: self._open()
         L = self.last; kin = L.get("kinematic") or {}; att = L.get("attitude") or {}; rg = L.get("optrange") or {}; fm = L.get("flight_mode") or {}
@@ -68,6 +71,7 @@ class HoldLog:
                          f(aid[0]) if aid else None, f(aid[1]) if aid else None, f(now - aid[2], 2) if aid else None,
                          at(4), at(8), at(10), at(12), at(13), at(14), f(rc_age, 1),
                          f(kin.get("vx_mps")), f(kin.get("vy_mps")), f(rg.get("distance_m")), deg(att.get("pitch_rad")), deg(att.get("roll_rad")),
-                         int(bool(vo.get("anchor"))), int(bool(vo.get("fresh"))), vo.get("text", ""), vo.get("state", ""), vo.get("hz", ""), vo.get("msg", ""), getattr(c.autonomy, "flight_mode", "")])
+                         int(bool(vo.get("anchor"))), int(bool(vo.get("fresh"))), vo.get("text", ""), vo.get("state", ""), vo.get("hz", ""), vo.get("msg", ""), getattr(c.autonomy, "flight_mode", ""), getattr(c.safety, "disarm_latched", "") or "", " | ".join(self.events)])
+        self.events.clear()
         self.rows += 1
         if self.rows % 20 == 0: self.f.flush()
