@@ -131,7 +131,7 @@ class DiagnosticsPage(QWidget):
             except Exception: sent = None
         fc = list(probe.rc) if (probe is not None and probe.rc) else None
         fc_age = (time.monotonic() - probe.t_rc) if (probe is not None and probe.t_rc) else None
-        fc_ok = fc is not None and fc_age is not None and fc_age < 5.0
+        fc_ok = fc is not None and fc_age is not None and fc_age < 10.0          # replies come about every 3 s over the radio (0.3 Hz seen live 2026-11-25): 5 s blanked the column between two replies
         verdict = {r[0]: r for r in core.rc_check.rows} if core.rc_check.rows else {}
         for i in range(16):
             ch = i + 1; t = self.tbl
@@ -157,7 +157,8 @@ class DiagnosticsPage(QWidget):
         gap = (getattr(sender, "recent_max_gap_s", None) * 1000.0) if (live and sender is not None and getattr(sender, "recent_max_gap_s", None) is not None) else None
         trips = getattr(sender, "stale_trips", None) if live else None
         air = packet_hz(st) if live else None
-        state_hz = st.rate(st.in_times, crsf.TYPE_STATE) if live else None
+        # the session re-labels every compact 0xD6 frame as the D3 (OPTRANGE) + D4 frames it replaces before they are counted (core._publish_frame_in), so count those too
+        state_hz = (max(st.rate(st.in_times, crsf.TYPE_STATE) or 0.0, st.rate(st.in_times, crsf.TYPE_OPTRANGE) or 0.0)) if live else None
         batt_hz = st.rate(st.in_times, crsf.TYPE_BATTERY) if live else None
         link = st.decoded.get("link") if live and isinstance(getattr(st, "decoded", None), dict) else None
         lq = None if not link else min(link.get("up_lq", 0), link.get("down_lq", 0))

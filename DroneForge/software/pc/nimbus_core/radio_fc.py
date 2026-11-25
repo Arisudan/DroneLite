@@ -23,7 +23,10 @@ def decode_motors(payload: bytes) -> Optional[list]:
 def decode_rc(payload: bytes) -> Optional[list]:
     """MSP_RC: one little-endian uint16 per channel the receiver delivers (microseconds as the FC sees them, rcData[0..n-1]); None when shorter than 4 channels."""
     n = len(payload) // 2
-    return list(struct.unpack_from("<%dH" % min(n, 18), payload, 0)) if n >= 4 else None
+    if n < 4: return None
+    v = list(struct.unpack_from("<%dH" % min(n, 18), payload, 0))
+    v[2], v[3] = v[3], v[2]          # Betaflight's rcData order is roll, pitch, YAW, THROTTLE; the GCS / CRSF order is roll, pitch, THROTTLE, yaw (seen live 2026-11-25: CH3 +512 / CH4 -512)
+    return v
 
 
 def decode_blockers(payload: bytes) -> Optional[list]:

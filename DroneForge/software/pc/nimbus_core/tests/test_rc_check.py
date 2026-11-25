@@ -70,6 +70,10 @@ class TestStateMachine(unittest.TestCase):
 
 
 class TestPlumbing(unittest.TestCase):
+    def test_decode_rc_swaps_yaw_and_throttle_to_crsf_order(self):
+        v = decode_rc(struct.pack("<8H", 1500, 1500, 1500, 988, 988, 0, 0, 0))      # Betaflight order: roll, pitch, yaw, throttle
+        self.assertEqual(v[:4], [1500, 1500, 988, 1500])
+
     def test_decode_rc_and_the_channel_order(self):
         self.assertEqual(decode_rc(struct.pack("<16H", *range(1000, 1016)))[12], 1012); self.assertIsNone(decode_rc(b"\x01\x02"))
         ch = Controls(aux8=1700, aux12=800, aux5=900, aux9=1000).to_channels(False)
