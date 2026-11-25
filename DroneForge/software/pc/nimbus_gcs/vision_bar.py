@@ -21,6 +21,7 @@ TIPS = {"depth": "Depth Anything 3 (metric) on the live video: colour overlay an
 AID_HZ = 10.0
 CALM_SPEED = 0.15            # m/s, as the firmware's brake-then-hold (xy_hold_core.c brake_speed)
 CALM_S = 0.2
+ANCHOR_MAX_WAIT_S = 2.0      # in HOLDING but never calm (a drifting drone is never slower than CALM_SPEED): set the key frame anyway after this long, the FC then pulls back to it
 MSP_AID_PERIOD_S = 0.5       # the MSP copy of the aid (for v4.7 / v4.7.1 FCs): 2 Hz is all ELRS passes anyway; v4.7.2 reads the RC channels
 
 
@@ -41,7 +42,7 @@ class VisionBar(QWidget):
         self.note = QLabel(""); self.note.setFont(T.f_body(11)); self.note.setStyleSheet(f"color:{T.DIM}"); self.note.setMinimumWidth(200)
         h.addWidget(self.note, 1)
         self.setStyleSheet(f"#visionBar {{ background:{T.PANEL}; border-top:1px solid {T.HAIR}; }}")
-        self._style(); self._t_calm = None; self._last_aid = 0.0; self.aid_sent = 0; self._msg = ""; self.aid_fw = AidSupport()      # does this FC firmware take the aid (v4.7 ST)? asked of the FC
+        self._style(); self._t_calm = None; self._t_hold = None; self._auto_vo = False; self._last_aid = 0.0; self.aid_sent = 0; self._msg = ""; self.aid_fw = AidSupport()      # does this FC firmware take the aid (v4.7 ST)? asked of the FC
         self._timer = QTimer(self); self._timer.timeout.connect(self._tick); self._timer.start(int(1000 / AID_HZ))
 
     # ---- buttons
@@ -59,7 +60,17 @@ class VisionBar(QWidget):
         face = self.btns["face"].isChecked(); self.name.setVisible(face); self.btn_enroll.setVisible(face)
 
     # ---- 10 Hz: status line + the VO position aid for the FC
+    def _auto_start_vo(self) -> None:
+        """VO runs by default (owner, 2026-11-25): once connected and the video is live it is switched on, once per session; the button still switches it off and that stays off."""
+        if self._auto_vo or self.btns["vo"].isChecked(): return
+        try:
+            frame, _t = get_source(self.win).latest_with_time()
+            if self.win.model.connected and frame is not None:
+                self._auto_vo = True; self.btns["vo"].setChecked(True)          # the toggle starts the engine
+        except Exception: pass                                                  # noqa: BLE001
+
     def _tick(self) -> None:
+        self._auto_start_vo()
         e = self.engine; parts = []; warn = False
         dec = self.win.model.state.decoded; o = dec.get("optrange") or {}; att = dec.get("attitude") or {}
         if e.any_on() and o.get("distance_m", 0.0) > 0.2 and att:                    # DA3 floor scale: camera height (range, camera ~0.04 m above the sensor) + FC attitude (sign UNVERIFIED on the real FC)
@@ -73,6 +84,8 @@ class VisionBar(QWidget):
         if getattr(e, "msg", ""): self._msg = e.msg; e.msg = ""
         if self._msg and ("Saved" in self._msg or "No face" in self._msg or "Type a name" in self._msg): parts.insert(0, self._msg)
         txt = "   \u00b7   ".join(p for p in parts if p) or "Vision off. The models run on this PC on the live video."
+        core = self.win.model.core
+        core.vo_status = {"anchor": bool(e.on["vo"] and e.has_anchor()), "fresh": bool(e.on["vo"] and e.fresh_aid() is not None), "text": (parts[-1] if (e.on["vo"] and parts) else "")}
         self.note.setText(txt); self.note.setStyleSheet(f"color:{T.AMB if warn else (T.TXT if parts else T.DIM)}")
 
     def _aid(self) -> str:
@@ -89,6 +102,7 @@ class VisionBar(QWidget):
             return "position aid: no flight state"
         hovering = phase == "holding" and not exploring
         if not hovering and hasattr(core, "clear_pos_aid"): core.clear_pos_aid()
+        self._t_hold = (self._t_hold or time.time()) if hovering else None
         fm = self.win.model.state.decoded.get("flight_mode") or {}
         if not hovering and str(fm.get("mode", "")).endswith("*"):            # BENCH: disarmed, carried by hand: show the VO displacement, NEVER send it (aid sign check)
             return self._bench_vo()
@@ -102,6 +116,7 @@ class VisionBar(QWidget):
             if spd < CALM_SPEED: self._t_calm = self._t_calm or time.time()
             else: self._t_calm = None
             if self._t_calm and time.time() - self._t_calm >= CALM_S and not e.anchor_pending(): e.request_anchor()
+            elif self._t_hold and time.time() - self._t_hold >= ANCHOR_MAX_WAIT_S and not e.anchor_pending(): e.request_anchor()     # drifting: anchor anyway
             return "position aid: setting the key frame"
         aid = e.fresh_aid()
         sess = getattr(core, "sess", None)

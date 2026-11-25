@@ -69,6 +69,8 @@ class NimbusCore:
         self.link = LinkSupervisor(self)
         self.director = FlightDirector(self)          # the GUI's only flight interface
         self.recorder = FlightRecorder(self)
+        from .hold_log import HoldLog
+        self.vo_status: dict = {}; self.hold_log = HoldLog(self)       # live hold log (nimbus_core/hold_log.py): what is sent, what the FC reads back, the aid, the FC speed
         self.motor_test = MotorTest(self)               # SETUP > Motor test: hold-to-spin one motor while disarmed
 
     def _feed_safety(self, msg) -> None:
@@ -319,6 +321,8 @@ class NimbusCore:
             send = Controls(roll=c.roll, pitch=c.pitch, yaw=c.yaw, throttle=(c.throttle * self.bench_scale) if c.arm else 0.0, arm=c.arm,
                             aux2=CRSF_MAX, aux3=c.aux3)
         self.last_sent = send
+        try: self.hold_log.sample(send)
+        except Exception as e: self.event(f"hold log stopped: {e}"); self.hold_log.close(); self.hold_log.sample = lambda *_: None          # noqa: BLE001  (a log problem never touches the flight path)
         self.sess.set_controls(send)
         self.bus.publish(T.CONTROLS, c)
         arm = bool(c.arm and self.sess.sender.allow_arm)

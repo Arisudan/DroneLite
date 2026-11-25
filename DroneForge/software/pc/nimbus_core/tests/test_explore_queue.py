@@ -68,6 +68,7 @@ class TestExploreButton(unittest.TestCase):
         def setEnabled(s, v): s.enabled = v
         def setText(s, v): s.text = v
         def set_active(s, v): s.active = v
+        def set_pending(s, v): s.pending = v
         def set_sub(s, v): s.sub = v
         def setToolTip(s, v): s.tip = v
 
@@ -81,7 +82,7 @@ class TestExploreButton(unittest.TestCase):
         for ph, pend, want in (("ready", False, False), ("armed", False, False), ("takeoff", False, True), ("climbing", False, True), ("holding", False, True), ("landing", False, False), ("climbing", True, True)):
             p = self._page(pending=pend); FlyPage._refresh_explore(p, ph); self.assertEqual(p.btn_explore.enabled, want, (ph, pend))
         p = self._page(pending=True); FlyPage._refresh_explore(p, "climbing")
-        self.assertIn("EXPLORE", p.btn_explore.text); self.assertEqual(p.btn_explore.sub, "starts at HOLDING"); self.assertTrue(p.btn_explore.active)    # state readable without colour
+        self.assertIn("EXPLORE", p.btn_explore.text); self.assertEqual(p.btn_explore.sub, "starts at HOLDING"); self.assertTrue(p.btn_explore.pending)    # state readable without colour
         p = self._page(); FlyPage._refresh_explore(p, "ready"); self.assertEqual(p.btn_explore.sub, "after take-off")
 
 
