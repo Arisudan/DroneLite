@@ -1,0 +1,4 @@
+# Only for running the tests and the documentation tools.
+-r requirements.txt
+pytest>=7.4
+reportlab>=4.0          # tools_scripts/docs_tools (PDF briefings), optional

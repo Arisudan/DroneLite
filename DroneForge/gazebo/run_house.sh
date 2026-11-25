@@ -29,8 +29,8 @@ GCS_MAP=0; [ "$MODE" = gcs ] && [ "${DF_MAP:-gcs}" = gcs ] && GCS_MAP=1      # 2
 [ $VO = -1 ] && { [ $EXPLORE_LIKE = 1 ] && VO=1 || VO=0; }
 [ $GCS_MAP = 1 ] && VO=0
 NEED_DEPTH=0; { [ $EXPLORE_LIKE = 1 ] || { [ "$MODE" = hovertest ] && [ $VO = 1 ]; }; } && [[ " ${ARGS[*]} " != *" --no-depth "* ]] && NEED_DEPTH=1
-[ $NEED_DEPTH = 1 ] && [ -z "$SERVER" ] && [ ! -f vision/models/nimbus/da3_metric.weights.safetensors ] && { echo "needs the depth server: --server http://127.0.0.1:8765 (or the weights in vision/models/nimbus)"; exit 1; }
-[ $VO = 1 ] && [ ! -f vision/models/superpoint_lightglue.onnx ] && { echo "visual odometry needs vision/models/superpoint.onnx and superpoint_lightglue.onnx (use --no-vo to run without)"; exit 1; }
+[ $NEED_DEPTH = 1 ] && [ -z "$SERVER" ] && [ ! -f vision/models/nimbus/da3_metric.weights.safetensors ] && { echo "needs the depth server: --server http://127.0.0.1:8765 (or the weights in vision/models/nimbus: python3 ../tools_scripts/get_models.py downloads them)"; exit 1; }
+[ $VO = 1 ] && [ ! -f vision/models/superpoint_lightglue.onnx ] && { echo "visual odometry needs vision/models/superpoint.onnx and superpoint_lightglue.onnx (python3 ../tools_scripts/get_models.py downloads them; or use --no-vo to run without)"; exit 1; }
 [ -f worlds/droneforge_house.sdf ] || python3 tools/make_house_world.py --camera 640x480@15
 [ -f worlds/house_plan.npz ] || python3 tools/floorplan.py
 python3 tools/make_gui_config.py >/dev/null 2>&1 || true

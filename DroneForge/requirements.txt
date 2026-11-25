@@ -1,0 +1,5 @@
+# DroneForge, machine WITHOUT an NVIDIA GPU (CPU onnxruntime: the depth model then takes ~3 s per frame, visual odometry ~5 Hz; fine for the GCS, tests and map building).
+#   pip install --user --break-system-packages -r requirements.txt           (Ubuntu 24.04: system Python, which also holds ROS 2's rclpy)
+# Machine WITH an NVIDIA GPU: use requirements-gpu.txt instead (never both: onnxruntime and onnxruntime-gpu conflict).
+-r requirements-base.txt
+onnxruntime>=1.20

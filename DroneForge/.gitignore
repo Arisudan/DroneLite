@@ -7,6 +7,7 @@ __pycache__/
 *.tar.gz
 *.bz2
 *.zip
+*.part
 /archive/
 /reference/
 /docs/fc_logs/

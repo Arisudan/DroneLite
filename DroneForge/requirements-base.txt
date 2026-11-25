@@ -1,0 +1,12 @@
+# DroneForge: Python packages shared by every machine (installed by requirements.txt or requirements-gpu.txt, you normally do not use this file directly).
+# Not pip packages (install with apt): ROS 2 Jazzy + Gazebo Harmonic + RTAB-Map (rclpy, cv_bridge, tf2_ros, ros_gz, rtabmap_*), ffmpeg. See setup_new_laptop.sh.
+PyQt6>=6.6              # the GCS
+numpy>=1.26             # 1.26 and 2.x both work
+opencv-python>=4.9      # 4.x and 5.x both work (the lens calibration handles the OpenCV 5 flag names). Do NOT also install opencv-contrib-python / opencv-python-headless
+av>=12                  # PyAV: raw H.264 / RTSP decode in the GCS
+pyserial>=3.5           # the ELRS dongle and the FC USB port
+PyYAML>=6.0
+scipy>=1.11             # calibration and system-identification tools
+uvicorn>=0.30           # the local Betaflight Configurator server (betaflight_configurator/)
+starlette>=0.37
+websockets>=12

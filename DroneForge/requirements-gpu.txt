@@ -1,0 +1,6 @@
+# DroneForge, machine WITH an NVIDIA GPU (verified 2026-11-21 on an RTX 5090 laptop: driver 595 + onnxruntime-gpu 1.32 = CUDA 13; depth ~60 ms, visual odometry ~10 ms).
+#   pip uninstall -y --break-system-packages onnxruntime ; pip install --user --break-system-packages -r requirements-gpu.txt
+# The [cuda,cudnn] extras pull the matching nvidia-* libraries; the code calls onnxruntime.preload_dlls() so no LD_LIBRARY_PATH is needed.
+# After installing, `python3 gazebo/vision/depth_server.py` must print providers: ['CUDAExecutionProvider', ...]
+-r requirements-base.txt
+onnxruntime-gpu[cuda,cudnn]>=1.32

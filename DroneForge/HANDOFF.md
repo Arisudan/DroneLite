@@ -72,7 +72,8 @@ Pipeline (Nimbus style): perception (Depth Anything 3 metric depth -> 6x8 grid +
 ## 5. How to run (new laptop)
 ```
 cd ~/Music/DroneForge && ./setup_new_laptop.sh            # check; add --install to install the missing parts
-# models: unpack droneforge_models.tar here if gazebo/vision/models is empty (da3_metric.onnx + .weights.safetensors ~1.3 GB, superpoint*.onnx)
+# python packages: pip install --user --break-system-packages -r requirements.txt   (NVIDIA GPU: requirements-gpu.txt instead)
+# models (~1.4 GB, resumable, sha256-checked): python3 tools_scripts/get_models.py   (--check, --optional, --from <folder>; see GIT_SYNC.md)
 python3 gazebo/vision/depth_server.py                     # must print: providers: ['CUDAExecutionProvider', ...] and warm-ups of tens of ms.
                                                           # If it says CPUExecutionProvider (~3 s/frame) the GPU libraries are not found: fix before anything else.
 # GCS (real FC on the CP2102 radio port):

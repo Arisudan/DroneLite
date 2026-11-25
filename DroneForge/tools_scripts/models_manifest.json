@@ -1,0 +1,31 @@
+{
+  "_comment": "Models DroneForge needs. 'url' = public download (resumable). sha256 + size are checked after every download. Add a mirror with --from <folder or URL base>.",
+  "root": "gazebo/vision/models",
+  "models": [
+    {"name": "da3_metric.weights.safetensors", "path": "nimbus/da3_metric.weights.safetensors", "size": 1336580972,
+     "sha256": "562c536a9b7fd34c47335700a857b59e802e953e0e5d7336c73e32d4a2a44808",
+     "url": "https://droneforge-assets-public.s3.amazonaws.com/models/da3_metric/da3_metric.weights.safetensors",
+     "what": "Depth Anything 3 metric depth, weights (1.3 GB): the depth model behind obstacles, the map and the VO anchors"},
+    {"name": "da3_metric.onnx", "path": "nimbus/da3_metric.onnx", "size": 526065,
+     "sha256": "452ca195410b965939c7d1133831f28feccc0082c9cd71045cfbcd685b1fb169",
+     "url": "https://droneforge-assets-public.s3.amazonaws.com/models/da3_metric/da3_metric.onnx",
+     "what": "Depth Anything 3 metric depth, graph (must sit next to the .weights.safetensors)"},
+    {"name": "superpoint.onnx", "path": "superpoint.onnx", "size": 5272808,
+     "sha256": "234d12c9f523292efb34e0ca513b011050b0c052700da9c01787b9356a1138d2",
+     "url": "https://github.com/fabio-sim/LightGlue-ONNX/releases/download/v1.0.0/superpoint.onnx",
+     "what": "SuperPoint feature extractor (visual odometry), LightGlue-ONNX v1.0.0"},
+    {"name": "superpoint_lightglue.onnx", "path": "superpoint_lightglue.onnx", "size": 45634561,
+     "sha256": "4f44f440bc08f71afc2ba619d33154d395284001c1387b14a3b58a3224f9490e",
+     "url": "https://github.com/fabio-sim/LightGlue-ONNX/releases/download/v1.0.0/superpoint_lightglue_fused_cpu.onnx",
+     "what": "LightGlue matcher (visual odometry); LightGlue-ONNX v1.0.0 asset superpoint_lightglue_fused_cpu.onnx, saved under this name"}
+  ],
+  "optional": [
+    {"name": "buffalo_l", "dest": "~/.insightface/models/buffalo_l", "size": 288621354, "check_file": "w600k_r50.onnx",
+     "url": "https://github.com/deepinsight/insightface/releases/download/v0.7/buffalo_l.zip", "unzip": true,
+     "what": "InsightFace buffalo_l (GCS vision bar FACE REC), unpacked into ~/.insightface/models/buffalo_l"}
+  ],
+  "manual": [
+    {"name": "detect.onnx", "path": "detect.onnx",
+     "what": "Optional YOLOv8 / YOLO11 COCO detector for the GCS DETECT button (output [1, 84, N]). Without it DETECT uses the depth obstacles only. Export your own: yolo export model=yolov8n.pt format=onnx"}
+  ]
+}

@@ -24,8 +24,8 @@ for p in ros-jazzy-rtabmap-ros ros-jazzy-rtabmap-slam ros-jazzy-rtabmap-odom ros
 command -v ffmpeg >/dev/null && ok "ffmpeg" || miss "ffmpeg  (sudo apt install ffmpeg)"
 
 echo "3. python packages (system Python 3.12)"
-for m in PyQt6 cv2 numpy scipy serial yaml websockets pytest onnxruntime; do
-  python3 -c "import $m" 2>/dev/null && ok "$m" || miss "python module $m"; done
+for m in PyQt6 cv2 numpy scipy serial yaml av uvicorn websockets pytest onnxruntime; do
+  python3 -c "import $m" 2>/dev/null && ok "$m" || miss "python module $m  (pip install --user --break-system-packages -r requirements.txt, or requirements-gpu.txt on an NVIDIA machine)"; done
 
 echo "4. GPU (the depth model, Depth Anything 3)"
 if command -v nvidia-smi >/dev/null; then ok "$(nvidia-smi --query-gpu=name,driver_version --format=csv,noheader | head -1)"; else miss "NVIDIA driver (nvidia-smi not found)"; fi
@@ -34,16 +34,16 @@ echo "$PROV" | grep -q CUDAExecutionProvider && ok "onnxruntime has CUDA ($PROV)
 
 echo "5. models"
 for m in gazebo/vision/models/nimbus/da3_metric.onnx gazebo/vision/models/nimbus/da3_metric.weights.safetensors gazebo/vision/models/superpoint.onnx gazebo/vision/models/superpoint_lightglue.onnx; do
-  [ -s "$DF/$m" ] && ok "$m" || miss "$m  (unpack droneforge_models.tar into the DroneForge folder)"; done
+  [ -s "$DF/$m" ] && ok "$m" || miss "$m  (python3 tools_scripts/get_models.py downloads it, ~1.4 GB, checked by sha256)"; done
 
 if [ $INSTALL = 1 ] && [ $MISSING -gt 0 ]; then
   echo "installing what is missing..."
   sudo apt update && sudo apt install -y ros-jazzy-desktop ros-jazzy-ros-gz ros-jazzy-rtabmap-ros ros-jazzy-cv-bridge ros-jazzy-tf2-ros ffmpeg python3-pip
-  pip install --user --break-system-packages PyQt6 opencv-python numpy scipy pyserial PyYAML websockets pytest
   if command -v nvidia-smi >/dev/null; then
     pip uninstall -y --break-system-packages onnxruntime 2>/dev/null
-    pip install --user --break-system-packages "onnxruntime-gpu[cuda,cudnn]"     # ORT >= 1.32 is built for CUDA 13; the extras pull the matching nvidia-* wheels
-  else pip install --user --break-system-packages onnxruntime; fi
+    pip install --user --break-system-packages -r "$DF/requirements-gpu.txt"     # onnxruntime-gpu[cuda,cudnn] >= 1.32 is built for CUDA 13; the extras pull the matching nvidia-* wheels
+  else pip install --user --break-system-packages -r "$DF/requirements.txt"; fi
+  python3 "$DF/tools_scripts/get_models.py"                                      # the depth / VO models (skips what is already there, verifies sha256)
   echo "done; run this script again (without --install) to confirm."
 elif [ $MISSING -gt 0 ]; then echo; echo "$MISSING item(s) missing. Run  ./setup_new_laptop.sh --install  or install them yourself."
 else echo; echo "everything is in place."; fi

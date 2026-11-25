@@ -11,6 +11,8 @@ except Exception: cv2 = None
 def main():
     p = argparse.ArgumentParser(); p.add_argument("--port", type=int, default=8765); p.add_argument("--models", default=os.path.join(os.path.dirname(os.path.abspath(__file__)), "models", "nimbus")); a = p.parse_args()
     core.MODELS = a.models
+    missing = [f for f in ("da3_metric.onnx", "da3_metric.weights.safetensors") if not os.path.isfile(os.path.join(a.models, f))]
+    if missing: sys.exit("depth model files missing in %s: %s\nDownload them (checked by sha256, ~1.3 GB):  python3 %s" % (a.models, ", ".join(missing), os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "tools_scripts", "get_models.py"))))
     import onnxruntime as ort
     try: ort.preload_dlls()                                  # GPU laptop: loads the CUDA / cuDNN libraries that pip installed (nvidia-*-cu12), so no LD_LIBRARY_PATH is needed
     except Exception: pass
