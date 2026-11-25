@@ -37,11 +37,11 @@ class PreflightList(QWidget):
         return HEAD_H + 8 + row_h * len(self._rows) + (32 if foot else 4)
 
     def _fit(self) -> None:
-        """Minimum = 24 px rows, no footnote; the rows stretch (24..40 px) with the height the column gives, the footnote shows only if room is left."""
-        self.setMinimumHeight(self.min_height_for(24, False))
+        """Minimum = 22 px rows (was 24: the 12th check, 2026-11-25), no footnote; the rows stretch (22..40 px) with the height the column gives, the footnote shows only if room is left."""
+        self.setMinimumHeight(self.min_height_for(22, False))
         self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding)
         n = max(1, len(self._rows)); h = self.height()
-        self._row_h = max(24, min(ROW_H + 2, (h - HEAD_H - 12) // n)) if h > 0 else 24
+        self._row_h = max(22, min(ROW_H + 2, (h - HEAD_H - 12) // n)) if h > 0 else 22
         self._foot = h - HEAD_H - 8 - self._row_h * n >= 30
 
     def resizeEvent(self, e):

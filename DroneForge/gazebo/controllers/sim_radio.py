@@ -62,7 +62,7 @@ class SimRadio(DongleEmulator):
         self.rcq = collections.deque(); self.txq = collections.deque(); self.lock = threading.Lock()
         self.tel = None; self.t_rc = 0.0; self.armed_cmd = False; self.prev = {}; self.next = {"state": 0.0, "bat": 0.0, "fm": 0.0, "link": 0.0}; self.diag = 0
         self.arm_refused = False; self.aidq = collections.deque()
-        if os.environ.get("DF_FW", "v47") in ("v47", "v471", "v472", "v473r"): self.KNOWN_WRITES = set(self.KNOWN_WRITES) | {commands.MSP2_DF_POS_AID}   # rev1 does not know the aid: it answers an error byte, as the real FC
+        if os.environ.get("DF_FW", "v47") in ("v47", "v471", "v472", "v473r", "v474r"): self.KNOWN_WRITES = set(self.KNOWN_WRITES) | {commands.MSP2_DF_POS_AID}   # rev1 does not know the aid: it answers an error byte, as the real FC
 
     # ---- uplink
     def _handle(self, f):
@@ -104,7 +104,7 @@ class SimRadio(DongleEmulator):
         if hold and h is not None and abs(h - self.prev.get("h", -1)) > 0.004: cmd["target_z"] = h; self.prev["h"] = h
         want = "alt_hold" if mode_alt else "pos_hold"
         if mode in ("ALT_HOLD", "POS_HOLD") and want.upper() != mode and not cmd.get("cmd"): cmd["cmd"] = want
-        if DF_FW_SIM in ("v472", "v473r") and ticks_to_us(ch[14]) > 1900.0:           # v4.7.2: the VO aid on CH13-15 (firmware hhReadRcAid: 1500 us = 0, 1 us = 1 mm, 1100..1900 us)
+        if DF_FW_SIM in ("v472", "v473r", "v474r") and ticks_to_us(ch[14]) > 1900.0:           # v4.7.2: the VO aid on CH13-15 (firmware hhReadRcAid: 1500 us = 0, 1 us = 1 mm, 1100..1900 us)
             fu, ru = ticks_to_us(ch[12]), ticks_to_us(ch[13])
             if 1100.0 <= fu <= 1900.0 and 1100.0 <= ru <= 1900.0: cmd["aid"] = [(fu - 1500.0) * 0.001, (ru - 1500.0) * 0.001, True]
         r, p, y = stick(ch[0]), stick(ch[1]), stick(ch[3])

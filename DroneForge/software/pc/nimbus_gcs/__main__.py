@@ -57,7 +57,9 @@ def main() -> int:
         QTimer.singleShot(600, _video)
     if args.screenshot:
         QTimer.singleShot(int(args.seconds * 1000), lambda: (win.grab().save(args.screenshot), win.close(), app.quit()))
-    return app.exec()
+    rc = app.exec()
+    win.deleteLater(); app.processEvents(); del win          # the window goes while the application object still exists (the other order crashed Qt at exit, 2026-11-25)
+    return rc
 
 
 if __name__ == "__main__":

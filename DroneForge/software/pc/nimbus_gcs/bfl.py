@@ -274,12 +274,44 @@ def summarize(lg: "Log") -> str:
     if "gyroADC[0]" in lg.ix:
         gx, gy = lg.column("gyroADC[0]"), lg.column("gyroADC[1]")
         out.append(f"Largest roll / pitch rate: {max(abs(x) for x in gx) / 10:.0f} / {max(abs(x) for x in gy) / 10:.0f} deg/s")
+    if all(f"debug[{i}]" in lg.ix for i in range(4)) and "surfaceRaw" in lg.ix:                      # firmware v4.7.4R + debug_mode DF_HOLD
+        out.extend(hold_report(lg, armed, rel))
     for tt, e in lg.events:
         if e.startswith("DISARM"):
             try: code = int(e.split("=")[1]); e = f"{e}  ({DISARM_REASONS.get(code, 'unknown')})"
             except ValueError: pass
         out.append(f"event @ {(tt / 1e6 - t0):.2f} s: {e}")
     return "\n".join(out)
+
+
+def hold_report(lg: "Log", armed: int, rel: List[float], min_up_cm: float = 15.0) -> List[str]:
+    """The sideways hold from the FC log (debug_mode DF_HOLD: debug[0] EKF velocity forward mm/s, [1] right mm/s, [2] / [3] VO aid forward / right mm, -32768 = no fresh aid).
+    Airborne = the range sensor at least min_up_cm above the floor. Returns the report lines (empty when the drone never flew)."""
+    rg = lg.column("surfaceRaw"); n = len(rg); head = sorted(rg[:max(5, armed)]); gnd = head[len(head) // 2]
+    d = [lg.column(f"debug[{i}]") for i in range(4)]
+    air = [k for k in range(armed, n) if rg[k] >= gnd + min_up_cm]
+    if len(air) < 50:
+        return []
+    spd = [((d[0][k] ** 2 + d[1][k] ** 2) ** 0.5) / 1000.0 for k in air]
+    rms = (sum(v * v for v in spd) / len(spd)) ** 0.5
+    secs = rel[air[-1]] - rel[air[0]]
+    have = [d[2][k] != -32768 and d[3][k] != -32768 for k in air]
+    lines = [f"Sideways hold (DF_HOLD, {secs:.1f} s airborne): EKF speed rms {rms:.3f} m/s, max {max(spd):.2f} m/s"]
+    if not any(have):
+        lines.append("  VO aid: none reached the hold (no aid sent, older than 0.3 s, ALT HOLD, or the aid path is not carried by the radio link)")
+        return lines
+    longest = 0.0; prev = have[0]; start = rel[air[0]]
+    for k, h in zip(air, have):                                          # longest stretch without a fresh aid
+        if h:
+            if not prev: longest = max(longest, rel[k] - start)
+            prev = True
+        else:
+            if prev: start = rel[k]
+            prev = False
+    if not prev: longest = max(longest, rel[air[-1]] - start)
+    mag = [((d[2][k] ** 2 + d[3][k] ** 2) ** 0.5) / 1000.0 for k, h in zip(air, have) if h]
+    lines.append(f"  VO aid: present in {100.0 * sum(have) / len(have):.0f} % of the airborne time, longest gap without it {longest:.1f} s, aid size rms {(sum(v * v for v in mag) / len(mag)) ** 0.5:.3f} m, max {max(mag):.2f} m")
+    return lines
 
 
 def _down(vals: List[float], n: int, maxn: int = 500) -> List[float]:

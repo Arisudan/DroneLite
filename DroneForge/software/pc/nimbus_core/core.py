@@ -21,6 +21,7 @@ from .autonomy import HoverAutonomy
 from .bus import TopicBus
 from .motor_test import MotorTest
 from .radio_fc import RadioFcProbe
+from .rc_check import RcChannelCheck, TEST_FIELDS
 from .recorder import FlightRecorder
 from .throttle_ramp import ThrottleRamp
 from .simsession import SimSession
@@ -58,6 +59,7 @@ class NimbusCore:
         self.state_source = "live"
         self.bench: Optional[BenchPlant] = None
         self.probe: Optional[RadioFcProbe] = None
+        self.rc_check = RcChannelCheck()        # do all 16 channels reach the FC intact? (nimbus_core/rc_check.py; runs by itself once per radio session, disarmed)
         self._fc_reader = None
         self.bench_scale = 0.4
         self.last_sent = Controls()
@@ -138,7 +140,8 @@ class NimbusCore:
         if self.bench is not None:
             self.bench.start()
         else:                                            # live link: read the FC's motor outputs over the radio (read-only MSP, own thread, 2 Hz) for the log
-            self.probe = RadioFcProbe(sess, period_s=0.5); self.probe.start(); self.recorder.probe = self.probe
+            self.probe = RadioFcProbe(sess, period_s=0.3); self.probe.start(); self.recorder.probe = self.probe
+            self.rc_check.reset(); self.rc_check.auto_done = False
         self.state_source = "bench" if self.bench is not None else "live"
         self.bus.publish(T.CONNECTION, {"connected": True, "port": port, "source": self.state_source})
         self.event(f"connected to {port}" + ("  [BENCH MODE: props OFF, sensors simulated from the FC's motor outputs, throttle x%.1f]" % self.bench_scale if self.bench is not None else ""))
@@ -234,6 +237,32 @@ class NimbusCore:
         self.external_controls = c
 
     # --- control tick (~50 Hz, driven by the caller: a Qt timer now, the core's own loop later) ---
+    def start_rc_check(self) -> bool:
+        """Run the RC channel test now (the Diagnostics tab button). Only on the live radio link, with the FC disarmed and no flight in progress."""
+        if self.state_source != "live" or self.probe is None or self.autonomy.fc_armed or self.autonomy.busy:
+            return False
+        self.rc_check.start(); self.event("RC channel test started (pattern on CH9-16, disarmed)")
+        return True
+
+    def _rc_channel_test(self, c):
+        """Apply the test pattern while the test runs and the FC is disarmed; start it once per radio session by itself; cancel it the moment anything arms."""
+        chk = self.rc_check
+        if self.probe is None or self.state_source != "live":
+            return c
+        armed_now = bool(c.arm) or bool(self.autonomy.fc_armed)
+        before = chk.state
+        chk.feed(self.probe.rc, self.probe.rc_req_t)
+        if chk.state == "running" and armed_now:
+            chk.cancel("the drone is arming")
+        if chk.state == "idle" and not chk.auto_done and not armed_now and not self.autonomy.busy and self.probe.replies >= 2:
+            chk.auto_done = True; chk.start(); self.event("RC channel test started (pattern on CH9-16, disarmed)")
+        if chk.state != before and chk.state != "running":
+            self.event(f"RC channel test: {chk.state.upper()}: {chk.detail}")
+        ov = chk.overrides()
+        if ov and not armed_now:
+            c = replace(c, **ov)
+        return c
+
     def set_pos_aid(self, forward_m: float, right_m: float) -> None:
         """The VO displacement from the hold point (drone axes, m). Sent to the FC on CH13-15 while younger than AID_FRESH_S (firmware v4.7.2)."""
         self.pos_aid = (float(forward_m), float(right_m), time.monotonic())
@@ -282,6 +311,7 @@ class NimbusCore:
         if aid is not None and c.arm and not self.safety.disarm_latched and time.monotonic() - aid[2] < AID_FRESH_S:
             from nimbus_pc.mapper import AID_FLAG_TICKS, aid_to_ticks
             c = replace(c, aux9=aid_to_ticks(aid[0]), aux10=aid_to_ticks(aid[1]), aux11=AID_FLAG_TICKS)
+        c = self._rc_channel_test(c)
         self.last_controls = c
         send = c
         if self.bench is not None:                                       # props OFF: slow motors, ACRO (no I-term wind-up on the still IMU)

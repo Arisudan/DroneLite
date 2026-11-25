@@ -200,18 +200,22 @@ class MapClient:
     """GCS side. Keeps the newest raw grid ("map_raw"), skeleton ("map_thin") and pose; reconnects by itself; reset() asks the server to restart the map."""
     def __init__(self) -> None:
         self.host = ""; self.port = DEFAULT_PORT; self.running = False; self.raw = None; self.thin = None; self.pose = None; self.t_raw = 0.0; self.t_thin = 0.0
-        self.state = "off"; self.reply = ""; self._sock: Optional[socket.socket] = None; self._gen = 0; self._lock = threading.Lock()
+        self.state = "off"; self.reply = ""; self._sock: Optional[socket.socket] = None; self._gen = 0; self._lock = threading.Lock(); self._wake = threading.Event()
 
     def start(self, host: str, port: int = DEFAULT_PORT) -> None:
-        self.stop(); self.host = host; self.port = port; self.running = True; self._gen += 1; self.state = "connecting"
-        threading.Thread(target=self._loop, args=(self._gen,), daemon=True).start()
+        self.stop(); self.host = host; self.port = port; self.running = True; self._gen += 1; self.state = "connecting"; self._wake.clear()
+        self._thread = threading.Thread(target=self._loop, args=(self._gen,), daemon=True); self._thread.start()
 
     def stop(self) -> None:
-        self.running = False; self._gen += 1; self.state = "off"
+        self.running = False; self._gen += 1; self.state = "off"; self._wake.set()          # wakes the reconnect wait at once
         s = self._sock
         if s is not None:
+            try: s.shutdown(socket.SHUT_RDWR)                       # wakes a recv() in the thread (close() alone does not): a thread still inside recv at interpreter exit crashed the process
+            except OSError: pass
             try: s.close()
             except OSError: pass
+        th = getattr(self, "_thread", None)
+        if th is not None and th is not threading.current_thread(): th.join(timeout=0.5)
 
     def clear(self) -> None:
         with self._lock:
@@ -264,4 +268,4 @@ class MapClient:
                     try: s.close()
                     except OSError: pass
             if self.running and gen == self._gen:
-                self.state = "connecting"; time.sleep(1.0)
+                self.state = "connecting"; self._wake.wait(1.0)

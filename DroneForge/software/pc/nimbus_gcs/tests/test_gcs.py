@@ -151,7 +151,7 @@ class TestFlightView(unittest.TestCase):
 
 
 EXPECTED = {"FLY": ["Fly"], "VIDEO": ["Video"], "SETUP": ["Setup"],
-            "ANALYZE": ["Flights", "Live data"], "SETTINGS": ["Settings"]}
+            "ANALYZE": ["Flights", "Live data"], "DIAGNOSTICS": ["Diagnostics"], "SETTINGS": ["Settings"]}
 
 
 class TestNavigationAndLayout(unittest.TestCase):
@@ -491,7 +491,7 @@ class TestFlyPage(unittest.TestCase):
         w.model.core.director.safe = lambda: (calls.append(1), orig())[1]
         self.assertEqual(w.sc_safe.key().toString(), "Esc"); w.sc_safe.activated.emit()
         self.assertEqual(calls, [1])
-        for i in range(5):
+        for i in range(6):
             w.tabs.select(i); self.assertTrue(w.btn_safe.isEnabled()); self.assertTrue(w.btn_safe.isVisible())
 
     def test_sim_arm_takeoff_hold_land_through_the_director(self):
@@ -521,7 +521,7 @@ class TestFlyPage(unittest.TestCase):
 
     def test_top_bar_chips_bell_palette_and_toasts(self):
         w = self.w; w.show(); w.refresh()
-        self.assertEqual(w.tabs._labels, ["FLY", "VIDEO", "SETUP", "ANALYZE", "SETTINGS"])
+        self.assertEqual(w.tabs._labels, ["FLY", "VIDEO", "SETUP", "ANALYZE", "DIAGNOSTICS", "SETTINGS"])
         self.assertEqual(w.chip_arm.value(), "--"); self.assertEqual(w.src_label.text(), "OFFLINE")
         w.model.core.notify("Test caution", "caution", "test"); w.refresh()
         self.assertGreaterEqual(w.bell.count(), 1)

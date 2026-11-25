@@ -7,6 +7,7 @@ Safe by default: the arm channel stays off unless allow_arm=True is passed expli
 from __future__ import annotations
 
 import argparse
+from collections import deque
 import errno
 import glob
 import math
@@ -99,6 +100,8 @@ class Controls:
     aux9: int = CRSF_MID    # ch13: v4.7.2 VO position aid, forward (1500 us = 0, 1 us = 1 mm; mapper.aid_to_ticks); needs a full-resolution ELRS rate
     aux10: int = CRSF_MID   # ch14: v4.7.2 VO position aid, right
     aux11: int = CRSF_MID   # ch15: v4.7.2 aid-valid flag (> 1900 us = valid); the centre (as Nimbus leaves it) = no aid
+    aux8: int = CRSF_MID    # ch12: no FC function (the channel test of the GCS Diagnostics tab uses it)
+    aux12: int = CRSF_MID   # ch16: no FC function (channel test)
 
     def to_channels(self, allow_arm: bool) -> list[int]:
         ch = [CRSF_MID] * 16
@@ -113,6 +116,7 @@ class Controls:
         ch[9] = max(CRSF_MIN, min(CRSF_MAX, self.aux6))
         ch[10] = max(CRSF_MIN, min(CRSF_MAX, self.aux7))
         ch[12] = max(CRSF_MIN, min(CRSF_MAX, self.aux9)); ch[13] = max(CRSF_MIN, min(CRSF_MAX, self.aux10)); ch[14] = max(CRSF_MIN, min(CRSF_MAX, self.aux11))
+        ch[11] = max(CRSF_MIN, min(CRSF_MAX, self.aux8)); ch[15] = max(CRSF_MIN, min(CRSF_MAX, self.aux12))
         return ch
 
 
@@ -143,6 +147,16 @@ class CrsfSender:
         self.frames_sent = 0
         self.failsafe_active = False
         self.max_interval_s = 0.0
+        self.last_channels = [CRSF_MID] * 16      # the 16 channels of the newest frame handed to the serial port (GCS Diagnostics tab)
+        self.stale_trips = 0                      # how often the stale-input failsafe took over (each = the GCS missed its 0.25 s refresh)
+        self._prev_fs = False
+        self._gaps: deque = deque()               # (time, gap between two RC frames) of the last 5 s
+
+    @property
+    def recent_max_gap_s(self) -> float:
+        """The longest gap between two RC frames in the last 5 s (100 Hz = 0.010 s; the FC's stale limit is 0.25 s)."""
+        g = list(self._gaps)
+        return max((x[1] for x in g), default=0.0)
 
     def set_controls(self, controls: Controls) -> None:
         with self._lock:
@@ -206,8 +220,13 @@ class CrsfSender:
             except OSError:
                 break
             self.frames_sent += 1
+            self.last_channels = list(channels)
+            if self.failsafe_active and not self._prev_fs: self.stale_trips += 1
+            self._prev_fs = self.failsafe_active
             if last is not None:
                 self.max_interval_s = max(self.max_interval_s, now - last)
+                self._gaps.append((now, now - last))
+                while self._gaps and now - self._gaps[0][0] > 5.0: self._gaps.popleft()
             last = now
             nxt += self.period
             if nxt < time.monotonic() - 5 * self.period:   # fell far behind: resynchronise instead of bursting

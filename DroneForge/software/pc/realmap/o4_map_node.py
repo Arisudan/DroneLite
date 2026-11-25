@@ -74,6 +74,7 @@ class O4Map(Node):
         super().__init__("droneforge_o4_map"); self.a = a
         self.pub_rgb = self.create_publisher(Image, "/droneforge/rgb/image", 5); self.pub_depth = self.create_publisher(Image, "/droneforge/depth/image", 5)
         self.pub_info = self.create_publisher(CameraInfo, "/droneforge/rgb/camera_info", 5); self.pub_obs = self.create_publisher(String, "/droneforge/perception/obstacles", 10)
+        self.pub_att = self.create_publisher(String, "/droneforge/fc/attitude", 10)          # roll / pitch (rad) for the real explorer (realmap/real_explore.py): the tilt the depth projection needs
         self.pub_odom = self.create_publisher(Odometry, "/odom", 10); self.br = TransformBroadcaster(self); self.sbr = StaticTransformBroadcaster(self)
         st = stamp_of(time.time())                                  # camera mount: 6.5 cm forward, 2.5 cm up, LEVEL (optical frame: z forward, x right, y down)
         self.sbr.sendTransform([tf("base_link", "camera_link", st, 0.065, 0.0, 0.025, 0.0, 0.0, 0.0, 1.0), tf("camera_link", "camera_optical", st, 0.0, 0.0, 0.0, -0.5, 0.5, -0.5, 0.5)])
@@ -120,6 +121,7 @@ class O4Map(Node):
         o = Odometry(); o.header.stamp = st; o.header.frame_id = "odom"; o.child_frame_id = "base_link"
         o.pose.pose.position.x, o.pose.pose.position.y, o.pose.pose.position.z = x, y, z; o.pose.pose.orientation.z, o.pose.pose.orientation.w = qz, qw
         o.twist.twist.linear.x = float(ef); o.twist.twist.linear.y = float(el); self.pub_odom.publish(o)
+        self.pub_att.publish(String(data=json.dumps({"roll": roll, "pitch": pitch, "t": t})))
 
     def on_vo(self, m):
         """The SuperPoint/LightGlue key-frame fix, as the sim estimator (vision/sim_tf_odom.py) uses it."""

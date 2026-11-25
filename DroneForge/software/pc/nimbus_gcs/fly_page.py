@@ -184,7 +184,7 @@ class FlyPage(QWidget):
         mm = self.mode_card.layout().contentsMargins(); mode_x = mm.top() + mm.bottom() + 20 + (1 if on else 3) * self.mode_card.body.spacing()      # the mode card: margins, title, gaps
         mode_rows = mode_btn0 if on else (mode_btn0 + mode_txt0)                                                                              # ALT | POS | EXPLORE tiles in one row; compact: no text
         fixed = main0 + act0 + why_h + fld0 + card_x + mode_rows + mode_x + 2 + (6 if not on else 0) + sl.spacing() * (5 if why_h else 4)
-        pf_min = self.preflight.min_height_for(24, False)
+        pf_min = self.preflight.min_height_for(22, False)
         self.side.min_h = int(fixed + pf_min)
         extra = max(0, side_h - fixed - pf_min)
         pf_x = min(extra * 0.5, 16 * n + 32); rest = extra - pf_x

@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """Set exactly one Betaflight parameter (debug_mode) via CLI and save.
-usage: fc_set_debug_mode.py <port> <RANGEFINDER|OPTICALFLOW>
+usage: fc_set_debug_mode.py <port> <RANGEFINDER|OPTICALFLOW|DF_HOLD|NONE>   (DF_HOLD: firmware v4.7.4R and later)
 Only 'get debug_mode', 'set debug_mode = <value>' and 'save' are ever sent.
 """
 import os, select, sys, termios, time
 port, value = sys.argv[1:3]
-assert value in ("RANGEFINDER", "OPTICALFLOW")
+assert value in ("RANGEFINDER", "OPTICALFLOW", "DF_HOLD", "NONE")
 fd = os.open(port, os.O_RDWR | os.O_NOCTTY)
 a = termios.tcgetattr(fd); a[0]=a[1]=a[3]=0; a[2]=termios.CS8|termios.CREAD|termios.CLOCAL; a[4]=a[5]=termios.B115200
 a[6][termios.VMIN], a[6][termios.VTIME] = 0, 1

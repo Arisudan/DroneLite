@@ -1,0 +1,87 @@
+--- v4.7.3R/xy_hold_core.c
++++ v4.7.4R/xy_hold_core.c
+@@ -10,12 +10,12 @@
+     p->test_deg = 2.5f; p->test_s = 0.8f; p->test_min_dv = 0.08f; p->calm_speed = 0.50f; p->calm_s = 0.5f;
+     p->runaway_speed = 1.0f; p->runaway_s = 1.0f; p->runaway_pos = 2.5f;
+     p->skip_test = 1.0f;
+-    p->stick_db = 2.0f; p->brake_speed = 0.15f; p->brake_s = 0.2f; p->aid_max_m = 3.0f; p->climb_trim = 0.0f;      /* v4.7.3R: stick_db 2.0 = stick-through can never trigger (the stick is +-1.0), as v4.6-rev1; climb_trim 0 = no trim learning in the climb, as v4.6-rev1 (v4.7: 0.05 / 3.0). The VO aid (aid_max_m) is kept */
++    p->stick_db = 2.0f; p->brake_speed = 0.15f; p->brake_s = 0.2f; p->aid_max_m = 3.0f; p->climb_trim = 3.0f;      /* stick_db 2.0 = stick-through can never trigger (the stick is +-1.0), as v4.6-rev1. v4.7.4R: climb_trim 3 deg/m = the level trim is learned from the drift speed during the take-off climb (v4.7.3R: 0), so POS HOLD starts with the level error compensated. The VO aid (aid_max_m) is kept */
+ }
+ 
+ void xyStart(xyState_t *s) { memset(s, 0, sizeof(*s)); s->active = true; }
+ /* mode switch back to position hold: a new "stay here" point (displacement and integral cleared); resets runaway latch */
+-void xyReposition(xyState_t *s) { s->p[0] = s->p[1] = 0.0f; s->t_run = 0.0f; s->out[0] = s->out[1] = 0.0f; s->disabled = false; s->braking = false; s->t_brake = 0.0f; s->i[0] = s->i[1] = 0.0f; }   /* v4.7.3R: clears the integral too, as v4.6-rev1 (v4.7 kept it) */
++void xyReposition(xyState_t *s) { s->p[0] = s->p[1] = 0.0f; s->t_run = 0.0f; s->out[0] = s->out[1] = 0.0f; s->disabled = false; s->braking = false; s->t_brake = 0.0f; }   /* v4.7.4R: the integral (the learned level trim) is KEPT by a re-anchor; xyStart clears it for a new flight */
+ void xyBrakeThenHold(xyState_t *s) { s->braking = true; s->t_brake = 0.0f; s->stick_on = false; s->out[0] = s->out[1] = 0.0f; }
+ void xyStop(xyState_t *s) { s->active = false; s->out[0] = s->out[1] = 0.0f; }
+ 
+@@ -111,7 +111,7 @@
+             out[ax] = -clampf_(p->kv * v[ax], -p->max_deg, p->max_deg);   /* v4.4: full authority (was +-1.5 deg): the real drone drifts ~0.2 m/s^2 after lift-off and +-1.5 deg could not stop it before the runaway guard tripped (2026-11-16, 3 flights); the guard stays the fail-safe */
+             continue;
+         }
+-        const float kp = hold ? p->kp : 0.0f, ki = hold ? p->ki : 0.0f;   /* v4.7.3R: as v4.6-rev1: kp and ki only in the hold */
++        const float kp = hold ? p->kp : 0.0f, ki = p->ki;               /* v4.7.4R: the learned trim (integral) acts in the climb too; the displacement (kp) only in the hold */
+         out[ax] = -sg * (p->kv * v[ax] + kp * s->p[ax] + ki * s->i[ax]);
+         out[ax] = clampf_(out[ax], -p->max_deg, p->max_deg);
+     }
+--- v4.7.3R/height_hold.c
++++ v4.7.4R/height_hold.c
+@@ -19,6 +19,7 @@
+ 
+ #include "flight/failsafe.h"
+ #include "flight/height_hold.h"
++#include "build/debug.h"
+ #include "flight/height_hold_core.h"
+ #include "flight/xy_hold_core.h"
+ #include "flight/ground_hold_gate.h"
+@@ -155,6 +156,7 @@
+     xyHoldAngle[0] = xyHoldAngle[1] = 0.0f; xyStarted = false; xyPaused = false;      /* the sideways hold ends with the height hold */
+     hhDisengage(&hhState);
+     if (fault) hhFault = true;
++    DEBUG_SET(DEBUG_DF_HOLD, 0, 0); DEBUG_SET(DEBUG_DF_HOLD, 1, 0); DEBUG_SET(DEBUG_DF_HOLD, 2, -32768); DEBUG_SET(DEBUG_DF_HOLD, 3, -32768);   /* v4.7.4R: hold ended */
+ }
+ 
+ void heightHoldUpdate(timeUs_t currentTimeUs)
+@@ -248,14 +250,23 @@
+         xyReposition(&xyState);                                                /* handover anchor: reset position displacement to zero at hover location (v4.7.3R: as v4.6-rev1, no brake first) */
+     }
+     hhLastMode = hhState.mode;
+-    if (!xyPaused && kinematicEstimatorGetBodyVelocity(&fwd, &rgt) && hhState.active) {
++    const bool velOk = kinematicEstimatorGetBodyVelocity(&fwd, &rgt);        /* read-only getter */
++    bool aidShown = false;
++    if (!xyPaused && velOk && hhState.active) {
+         /* v4.7 ST: the RC sticks (rcCommand +-500: roll right +, pitch forward +) and the PC's position aid while fresh (v4.7.2: from RC channels or MSP) */
+         hhReadRcAid(currentTimeUs);
+         const bool aidFresh = aidValid && aidUs && cmpTimeUs(currentTimeUs, aidUs) < HH_AID_MAX_AGE_US;
++        aidShown = aidFresh;
+         xyUpdateST(&xyState, &xyParams, dtc, fwd, rgt, hhCorrectHeight(zr), hhState.mode == HH_MODE_HOLD, rcCommand[PITCH] / 500.0f, rcCommand[ROLL] / 500.0f,
+                    aidFresh, aidFwd, aidRight, &rollDeg, &pitchDeg);
+     }
+     xyHoldAngle[0] = rollDeg; xyHoldAngle[1] = pitchDeg;
++    /* v4.7.4R debug_mode DF_HOLD (blackbox debug[0..3], once per hold update, ~50 Hz): the EKF body velocity the sideways loop works with and the VO aid it was given,
++     * so POS HOLD and the aid's arrival can be judged from the FC log alone. -32768 = no fresh aid (not sent, older than HH_AID_MAX_AGE_US, ALT HOLD, or not in the hold). */
++    DEBUG_SET(DEBUG_DF_HOLD, 0, velOk ? (int16_t)constrainf(lrintf(fwd * 1000.0f), -32767.0f, 32767.0f) : 0);
++    DEBUG_SET(DEBUG_DF_HOLD, 1, velOk ? (int16_t)constrainf(lrintf(rgt * 1000.0f), -32767.0f, 32767.0f) : 0);
++    DEBUG_SET(DEBUG_DF_HOLD, 2, aidShown ? (int16_t)constrainf(lrintf(aidFwd * 1000.0f), -32767.0f, 32767.0f) : -32768);
++    DEBUG_SET(DEBUG_DF_HOLD, 3, aidShown ? (int16_t)constrainf(lrintf(aidRight * 1000.0f), -32767.0f, 32767.0f) : -32768);
+ }
+ 
+ #endif
+--- v4.7.3R/debug.h
++++ v4.7.4R/debug.h
+@@ -120,6 +120,7 @@
+     DEBUG_MAG_TASK_RATE,
+     DEBUG_EZLANDING,
+     DEBUG_OPTICALFLOW,
++    DEBUG_DF_HOLD,          /* DroneForge v4.7.4R: [0] EKF velocity forward mm/s, [1] right mm/s, [2] VO aid forward mm (-32768 = no fresh aid), [3] aid right mm */
+     DEBUG_COUNT
+ } debugType_e;
+ 
+--- v4.7.3R/debug.c
++++ v4.7.4R/debug.c
+@@ -118,4 +118,5 @@
+     "MAG_TASK_RATE",
+     "EZLANDING",
+     "OPTICALFLOW",
++    "DF_HOLD",
+ };

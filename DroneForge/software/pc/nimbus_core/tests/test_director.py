@@ -29,7 +29,7 @@ class TestPreflight(unittest.TestCase):
             (dict(telemetry_age_s=1.0), "telemetry", False, False), (dict(telemetry_age_s=None), "telemetry", False, False),
             (dict(fc_armed=True), "disarmed", False, True),
             (dict(rest_tilt_deg=0.49), "rest_tilt", True, False), (dict(rest_tilt_deg=1.0), "rest_tilt", False, False), (dict(rest_tilt_deg=1.6), "rest_tilt", False, False),
-            (dict(range_m=0.01), "range", False, False), (dict(range_m=0.2), "range", False, False), (dict(range_m=None), "range", False, False), (dict(range_age_s=2.0), "range", False, False),
+            (dict(range_m=0.01), "range", False, False), (dict(range_m=0.15), "range", True, False), (dict(range_m=0.16), "range", False, True), (dict(range_m=0.2), "range", False, True), (dict(range_m=None), "range", False, False), (dict(range_age_s=2.0), "range", False, False),
             (dict(autonomy_idle=False), "autonomy_idle", False, True),
             (dict(safety_latch="inverted"), "safety", False, True),
             (dict(battery_v=None), "battery", False, False),

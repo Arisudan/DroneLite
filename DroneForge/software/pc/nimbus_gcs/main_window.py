@@ -41,7 +41,7 @@ def apply_dark(app) -> None:
 
 class MainWindow(QMainWindow):
     """Window shell: header, navigation (five workspaces), workspace hosting, timers and connection handling."""
-    WORKSPACES = ("FLY", "VIDEO", "SETUP", "ANALYZE", "SETTINGS")
+    WORKSPACES = ("FLY", "VIDEO", "SETUP", "ANALYZE", "DIAGNOSTICS", "SETTINGS")
 
     def __init__(self, model: GcsModel | None = None):
         super().__init__()
@@ -100,6 +100,8 @@ class MainWindow(QMainWindow):
         w = add("ANALYZE")
         w.add_page("Flights", lambda: self._reg("flights_page", FlightsPage(self)))
         w.add_page("Live data", lambda: self._reg("live_page", LiveDataPage(self)))
+        w = add("DIAGNOSTICS")
+        w.add_page("Diagnostics", lambda: self._reg("diagnostics_page", self._import("diagnostics_page", "DiagnosticsPage", "Diagnostics")))
         w = add("SETTINGS")
         w.add_page("Settings", lambda: self._reg("settings_page", self._import("settings_page", "SettingsPage", "Settings")))
         self.fly = self.workspaces["FLY"].build(0)                                  # the Fly page always exists (director, SAFE, pre-flight)
@@ -121,7 +123,7 @@ class MainWindow(QMainWindow):
     # page attribute -> (workspace, sub-tab title): `win.sensor_tab` etc. keep working although pages are built lazily
     _PAGE_SLOTS = {"sensor_tab": ("SETUP", "Setup"), "motor_tab": ("SETUP", "Setup"), "calibration_page": ("SETUP", "Setup"), "radio_page": ("SETUP", "Setup"),
                    "logs_tab": ("ANALYZE", "Flights"), "telemetry_page": ("ANALYZE", "Live data"),
-                   "settings_page": ("SETTINGS", "Settings"),
+                   "settings_page": ("SETTINGS", "Settings"), "diagnostics_page": ("DIAGNOSTICS", "Diagnostics"),
                    "video_page": ("VIDEO", "Video")}
 
     def __getattr__(self, name: str):
@@ -209,7 +211,7 @@ class MainWindow(QMainWindow):
         self.sc_safe = sc(Qt.Key.Key_Escape, self.on_safe)
         from .flight_keys import FlightKeys
         self.flight_keys = FlightKeys(self)                  # hold A = ARM, hold T = TAKE OFF, D = DISARM, L = LAND (same gates as the buttons)
-        self.sc_nums = [sc(str(i + 1), lambda i=i: self._number_key(i)) for i in range(5)]
+        self.sc_nums = [sc(str(i + 1), lambda i=i: self._number_key(i)) for i in range(len(self.WORKSPACES))]
         self.sc_sub_next = sc("Ctrl+Tab", lambda: self.workspaces[self.current_workspace()].cycle(1))
         self.sc_sub_prev = sc("Ctrl+Shift+Tab", lambda: self.workspaces[self.current_workspace()].cycle(-1))
         self.sc_ws_prev = sc("Ctrl+Left", lambda: self._step_workspace(-1))
@@ -230,7 +232,7 @@ class MainWindow(QMainWindow):
 
     # --- header -------------------------------------------------------------------------------
     def _build_header(self) -> QWidget:
-        """One fixed 56 px row on every page: logo, FLY VIDEO SETUP ANALYZE SETTINGS, source, DISARMED / MODE / BATT / LINK chips, bell, SAFE."""
+        """One fixed 56 px row on every page: logo, FLY VIDEO SETUP ANALYZE DIAGNOSTICS SETTINGS, source, DISARMED / MODE / BATT / LINK chips, bell, SAFE."""
         h = QFrame(); h.setObjectName("topbar"); h.setFixedHeight(T.TOP_BAR_H)
         h.setStyleSheet(f"QFrame#topbar {{ background:{T.BG}; border:none; border-bottom:1px solid {T.HAIR}; }}")
         l = QHBoxLayout(h); l.setContentsMargins(24, 0, 24, 0); l.setSpacing(8)
@@ -353,6 +355,10 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, e) -> None:
         self.fast.stop(); self.slow.stop(); self.vision_bar.shutdown()
+        try: self.__dict__.get("video_source") and self.video_source.stop()          # the camera thread is stopped with the window (a thread stuck in a connect ends by itself)
+        except Exception: pass
+        try: self.map_client.stop()                                  # the map stream thread: a daemon thread still inside recv() at interpreter exit crashed the process
+        except Exception: pass
         if self.map_frames is not None: self.map_frames.close()
         self.model.disconnect(); super().closeEvent(e)
 

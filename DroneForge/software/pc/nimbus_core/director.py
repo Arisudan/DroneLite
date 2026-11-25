@@ -69,7 +69,8 @@ HINTS = {   # check id -> (fix_hint, goto)
     "telemetry": ("Wait a moment; if it stays, check the radio link and the FC power.", ("SETUP", "Radio")),
     "disarmed": ("Press SAFE to disarm the flight controller.", None),
     "rest_tilt": ("Place the drone on a level surface, then SETUP > Calibration > Level.", ("SETUP", "Calibration")),
-    "range": ("Check the range sensor is clear and the drone sits on the ground.", ("SETUP", "Sensors")),
+    "range": ("Put the drone on the floor (not on a stand or a box) and check the range sensor is clear.", ("SETUP", "Sensors")),
+    "rc_channels": ("Open DIAGNOSTICS and run the channel test; if CH13-16 are not carried set ELRS to 100Hz Full + 16ch.", ("DIAGNOSTICS", "Diagnostics")),
     "autonomy_idle": ("Wait for the current flight or test to finish, or press SAFE.", None),
     "safety": ("Flip the arm switch off, or press SAFE, to clear the safety latch.", None),
     "battery": ("Check the battery is connected and the voltage reading is on.", ("SETTINGS", "Settings")),
@@ -100,8 +101,10 @@ def evaluate_preflight(st: dict) -> list[Check]:
     r = st.get("range_m")
     fresh = st.get("range_age_s") is not None and st["range_age_s"] < TELEM_FRESH_S
     lo, hi = GROUND_RANGE_M
+    on_something = (not sim) and r is not None and fresh and r > hi          # 2026-11-25: blocking. The height hold takes the reading at arming as the ground: on a stand, a box or a hand it would hold the height of the wrong floor
     add("range", "Range sensor reads the ground", sim or (r is not None and fresh and lo <= r <= hi),
-        "simulated" if sim else ("no range data" if r is None or not fresh else f"{r:.3f} m" + ("" if lo <= r <= hi else f" (expected {lo}-{hi} m)")), blocking=False)
+        "simulated" if sim else ("no range data" if r is None or not fresh else f"{r:.3f} m" + ("" if lo <= r <= hi else (f" (expected {lo}-{hi} m): the drone is not on the floor, put it on the floor" if on_something else f" (expected {lo}-{hi} m)"))),
+        blocking=on_something)
     add("autonomy_idle", "No flight in progress", st.get("autonomy_idle"), "idle" if st.get("autonomy_idle") else "a flight or test is running")
     latch = st.get("safety_latch")
     add("safety", "No safety latch", not latch, f"latched: {latch}" if latch else "clear")
@@ -109,6 +112,8 @@ def evaluate_preflight(st: dict) -> list[Check]:
     add("battery", "Battery reading present", bv is not None, "no reading" if bv is None else f"{bv:.1f} V", blocking=False)
     usb = bool(st.get("fc_usb")) and not sim
     add("fc_usb", "FC USB cable unplugged", not usb, "FC USB attached to this PC: unplug it before arming" if usb else "not attached", blocking=False)
+    rc = st.get("rc_check")                                                  # 2026-11-25: the 16 RC channels reach the FC intact (rc_check.py); a FAILED test blocks, an untested / silent one is a caution
+    add("rc_channels", "All 16 RC channels reach the FC", sim or rc in (None, "ok"), "simulated" if sim else ("not tested (needs the radio link)" if rc is None else str(st.get("rc_detail") or rc)), blocking=(not sim and rc == "fail"))
     h, c = st.get("height_m"), st.get("ceiling_m")
     add("ceiling", "Height setting within the ceiling", h is not None and c is not None and h <= c, f"{h} m vs ceiling {c} m" + ("" if (h is not None and c is not None and h <= c) else ": take-off will be limited to the ceiling"), blocking=False)
     return [replace(c, fix_hint=HINTS[c.id][0], goto=HINTS[c.id][1]) if c.id in HINTS else c for c in out]
@@ -182,7 +187,7 @@ class FlightDirector:
         return dict(connected=self.core.connected, simulated=self._sim(), link_lq=t["lq"], telemetry_age_s=None if t["t_any"] is None else now - t["t_any"],
                     fc_armed=au.fc_armed, rest_tilt_deg=None if att is None or now - t["t_att"] > TELEM_FRESH_S else max(abs(att[0]), abs(att[1])),
                     range_m=t["range"], range_age_s=None if t["t_range"] is None else now - t["t_range"], autonomy_idle=not au.busy,
-                    safety_latch=self.core.safety.disarm_latched, battery_v=t["batt"], fc_usb=fc_usb, height_m=au.settings.hover_height, ceiling_m=au.settings.ceiling_m)
+                    safety_latch=self.core.safety.disarm_latched, battery_v=t["batt"], fc_usb=fc_usb, rc_check=self.core.rc_check.state, rc_detail=self.core.rc_check.detail, height_m=au.settings.hover_height, ceiling_m=au.settings.ceiling_m)
 
     def preflight(self) -> list[Check]:
         cs = evaluate_preflight(self.preflight_input())

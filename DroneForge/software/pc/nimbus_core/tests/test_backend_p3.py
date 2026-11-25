@@ -101,6 +101,7 @@ class TestPreflightTopic(unittest.TestCase):
         self.assertEqual(cs["battery"].goto, ("SETTINGS", "Settings"))
         self.assertIsNone(cs["fc_usb"].goto)
         self.assertEqual(cs["ceiling"].goto, ("SETTINGS", "Settings"))
+        self.assertEqual(cs["rc_channels"].goto, ("DIAGNOSTICS", "Diagnostics"))
         self.assertTrue(all(c.fix_hint for c in cs.values()))
 
     def test_sig_ignores_numbers(self):
@@ -149,7 +150,7 @@ class TestLifecycleSim(unittest.TestCase):
         self.assertEqual((r.ok, r.status), (False, "denied"))
         self.assertEqual(d.command_status(r.command_id).status, "denied")
         ok, total, cautions = d.preflight_summary()
-        self.assertEqual(total, 11); self.assertLessEqual(ok, total); self.assertIsInstance(cautions, int)
+        self.assertEqual(total, 12); self.assertLessEqual(ok, total); self.assertIsInstance(cautions, int)      # 12 since 2026-11-25 (the RC channel row)
 
     def test_arm_timeout_no_retry(self):
         d = self.core.director

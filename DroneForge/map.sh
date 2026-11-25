@@ -5,7 +5,7 @@
 # Needs the GCS running (it shares the frames and the telemetry). Logs: ~/.local/state/droneforge/map/
 set -u
 DF="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"; ST="$HOME/.local/state/droneforge/map"; mkdir -p "$ST"
-PATTERNS=('^\S*python3 \S*realmap/o4_map_node\.py' '^\S*python3 \S*vision/map_stream_node\.py --map' '^\S*python3 \S*vision/visual_odom\.py --map' '^\S*(python3 \S*ros2 run rtabmap_slam rtabmap --ros-args --params-file \S*rtabmap_o4|rtabmap_slam/rtabmap --ros-args --params-file \S*rtabmap_o4)')
+PATTERNS=('^\S*python3 \S*realmap/o4_map_node\.py' '^\S*python3 \S*realmap/real_explore\.py' '^\S*python3 \S*vision/map_stream_node\.py --map' '^\S*python3 \S*vision/visual_odom\.py --map' '^\S*(python3 \S*ros2 run rtabmap_slam rtabmap --ros-args --params-file \S*rtabmap_o4|rtabmap_slam/rtabmap --ros-args --params-file \S*rtabmap_o4)')
 running() { for p in "${PATTERNS[@]}"; do pgrep -f -- "$p"; done 2>/dev/null | sort -u; }
 src() { set +u; source /opt/ros/jazzy/setup.bash; set -u; export FASTRTPS_DEFAULT_PROFILES_FILE="$DF/gazebo/config/fastdds_shm.xml"; }
 case "${1:-}" in
@@ -17,6 +17,9 @@ case "${1:-}" in
     setsid ros2 run rtabmap_slam rtabmap --ros-args --params-file "$DF/gazebo/config/rtabmap_o4.yaml" -p delete_db_on_start:=true \
       -r rgb/image:=/droneforge/rgb/image -r depth/image:=/droneforge/depth/image -r rgb/camera_info:=/droneforge/rgb/camera_info > "$ST/rtabmap.log" 2>&1 < /dev/null &
     setsid python3 "$DF/gazebo/vision/map_stream_node.py" --map > "$ST/map_stream.log" 2>&1 < /dev/null &      # /map -> /map_thin + pose -> tcp 5765 -> the GCS map views
+    if ! pgrep -f 'controllers/house_explore\.py' > /dev/null; then      # the REAL explorer (parked until EXPLORE is pressed in the GCS); not next to the simulator's own explorer (two would both steer)
+      setsid python3 "$DF/software/pc/realmap/real_explore.py" > "$ST/real_explore.log" 2>&1 < /dev/null &
+    fi
     sleep 3; echo "mapping started (logs $ST): $(running | wc -l) processes";;
   stop)
     P=$(running); [ -n "$P" ] && kill $P 2>/dev/null; sleep 1; P=$(running); [ -n "$P" ] && kill -9 $P 2>/dev/null; echo "mapping stopped";;

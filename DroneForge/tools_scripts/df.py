@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""DroneForge helper: df.py test [gcs|-k name] | logs [--free] | flash <fw.bin> | fcconfig | summary <LOG.BFL>   (short output; never arms anything)"""
+"""DroneForge helper: df.py test [gcs|-k name] | logs [--free] | flash <fw.bin> [--debug-hold] | fcconfig | debughold on|off | summary <LOG.BFL>   (short output; never arms anything)"""
 import glob, os, re, select, subprocess, sys, termios, time
 R = os.path.expanduser("~/Music/DroneForge"); PC = R + "/software/pc"; FC = R + "/tools_scripts/fc_config"
 sys.path.insert(0, PC)
@@ -40,6 +40,18 @@ def cmd_fcconfig(a):
         k, v = l[4:].split(" = "); dflt = (k == "debug_mode" and v == "NONE")
         ok = l in c or (dflt and not any(x.startswith("set debug_mode") for x in c)); print(("ok   " if ok else "FAIL ") + l)
     print("backup:", bak)
+
+
+def cmd_debughold(a):
+    """debughold on|off: set ONLY debug_mode (DF_HOLD = the FC log carries the EKF body velocity and the VO aid, firmware v4.7.4R and later; NONE = off, the flight default) and verify.
+    FC on USB, disarmed, powered >= 60 s. A backup is written first. Changes one FC setting: run it only when you want it."""
+    assert a[:1] in (["on"], ["off"]), "usage: df.py debughold on|off"
+    value = "DF_HOLD" if a[0] == "on" else "NONE"
+    port = wait_age(60); d, why = FL.fc_is_disarmed(port); assert d is True, f"refused: {why}"
+    bak = f"{R}/firmware/fc_matek_h743/config_backups/{time.strftime('%Y-%m-%d')}_before-debughold_{time.strftime('%Y%m%d_%H%M')}.txt"; dump(port, bak)
+    cli_set(wait_age(20), [f"set debug_mode = {value}"]); port = wait_age(25); after = bak.replace("before", "after"); dump(port, after); c = cfg(after)
+    ok = f"set debug_mode = {value}" in c or (value == "NONE" and not any(x.startswith("set debug_mode") for x in c))
+    print(("ok   " if ok else "FAIL ") + f"set debug_mode = {value}" + ("" if ok else "  (is this firmware v4.7.4R or later? older builds do not know DF_HOLD)")); print("backup:", bak)
 
 
 def cmd_test(a):
@@ -96,6 +108,8 @@ def cmd_flash(a):
     fix = sorted(l for l in b - c if l.startswith("set "))                    # values the restore script overwrote (e.g. acc_calibration): put the pre-flash ones back
     if fix: cli_set(port, fix); wait_age(25); print("re-applied:", fix); dump(wait_age(20), after); c = strip(cfg(after))
     print("config identical to pre-flash backup" if b == c else f"CONFIG DIFFERS: {sorted(b ^ c)[:6]}")
+    if "--debug-hold" in a[1:]:                                              # explicit, only when asked: log the sideways hold (firmware v4.7.4R+)
+        cli_set(wait_age(20), ["set debug_mode = DF_HOLD"]); wait_age(25); print("debug_mode = DF_HOLD set (the FC log now carries the EKF velocity and the VO aid)")
     p = subprocess.run([sys.executable, FC + "/fc_probe_msp_readonly.py", wait_age(20)], capture_output=True, text=True).stdout
     print(*[l for l in p.splitlines() if "Build date" in l])
 
@@ -107,4 +121,4 @@ def cli_set_bl(port):
 
 if __name__ == "__main__":
     c = sys.argv[1] if len(sys.argv) > 1 else ""
-    {"fcconfig": cmd_fcconfig, "test": cmd_test, "logs": cmd_logs, "flash": cmd_flash, "summary": cmd_summary}.get(c, lambda a: print(__doc__))(sys.argv[2:])
+    {"fcconfig": cmd_fcconfig, "debughold": cmd_debughold, "test": cmd_test, "logs": cmd_logs, "flash": cmd_flash, "summary": cmd_summary}.get(c, lambda a: print(__doc__))(sys.argv[2:])
