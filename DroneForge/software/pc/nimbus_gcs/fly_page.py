@@ -302,7 +302,8 @@ class FlyPage(QWidget):
             self.say(res)
 
     def on_explore(self) -> None:
-        on = not getattr(self.win.model.core.autonomy, "explore", False)
+        au = self.win.model.core.autonomy
+        on = not (getattr(au, "explore", False) or getattr(au, "explore_pending", False))      # a second click cancels a queued EXPLORE too
         res = self.director.explore(on)
         self.say(res) if not res.ok else self.status.setText(res.message)
         self._explore_sig = None
@@ -310,19 +311,23 @@ class FlyPage(QWidget):
     def _refresh_explore(self, ph: str) -> None:
         au = self.win.model.core.autonomy; on = bool(getattr(au, "explore", False)); steer = getattr(au, "steer", None)
         hz = steer.rate_hz() if (on and steer is not None and steer.running) else 0.0
-        can = on or ph == "holding"
-        sig = (on, can, round(hz))
+        pend = bool(getattr(au, "explore_pending", False))
+        can = on or pend or ph in ("takeoff", "climbing", "holding")      # live right after TAKE OFF; during the climb it is queued and starts by itself at HOLDING
+        sig = (on, pend, can, round(hz))
         if sig == self._explore_sig:
             return
         self._explore_sig = sig
         b = self.btn_explore; b.setEnabled(can)
-        b.setText("\u25cf EXPLORE" if on else "EXPLORE"); b.set_active(on)
-        b.set_sub(f"steering {hz:.0f} Hz" if on else ("explorer steers" if can else "while holding"))
-        b.setToolTip("EXPLORE: the PC explorer steers through the map while the FC holds the height" if can else "Available while holding in flight")
+        b.setText("\u25cf EXPLORE" if on else ("\u25d4 EXPLORE" if pend else "EXPLORE")); b.set_active(on or pend)
+        b.set_sub(f"steering {hz:.0f} Hz" if on else ("starts at HOLDING" if pend else ("explorer steers" if can else "after take-off")))
+        b.setToolTip("EXPLORE: the PC explorer steers through the map while the FC holds the height. Pressed during the climb it starts by itself when the FC holds; press again to cancel" if can else "Available from take-off on")
         if on:
             self.mode_text.setText(f"EXPLORE: the explorer steers ({hz:.0f} Hz), the FC holds the height" if hz >= 5 else
                                    "EXPLORE: waiting for the explorer: sticks centred, the FC holds the position")
             self.mode_text.setStyleSheet(f"color:{T.TXT if hz >= 5 else T.AMB}")
+        elif pend:
+            self.mode_text.setText("EXPLORE queued: the explorer starts steering the moment the FC holds the height. LAND or SAFE cancel it")
+            self.mode_text.setStyleSheet(f"color:{T.TXT}")
         else:
             self._mode_sig = None; self.mode_text.setStyleSheet(f"color:{T.DIM}")
 

@@ -63,6 +63,7 @@ class HoverAutonomy:
         self._t_arm: Optional[float] = None
         self.steer = SteerLink()                 # EXPLORE: stick wishes from the PC autonomy (nimbus_core/steering.py); the listener starts on the first EXPLORE
         self.explore = False
+        self.explore_pending = False             # EXPLORE pressed during take-off: starts by itself the moment the FC holds the height (2026-11-25)
         core.bus.subscribe(T.TELEMETRY, self._on_telemetry)
 
     # --- inputs -------------------------------------------------------------------------------
@@ -246,21 +247,47 @@ class HoverAutonomy:
         return True
 
     def set_explore(self, on: bool) -> tuple:
-        """EXPLORE on/off. On only while flying and the height hold is holding; the steering then comes from the explorer process (centred sticks while it sends nothing)."""
+        """EXPLORE on/off. During the take-off it is QUEUED: nothing steers until the height hold reports HOLDING, then the explorer starts by itself (2026-11-25: the button is live
+        right after TAKE OFF instead of ~13 s later). Once holding it starts at once. The steering then comes from the explorer process (centred sticks while it sends nothing)."""
         with self._lock:
             if not on:
-                was = self.explore; self.explore = False; self.steer.active = False
+                was, pend = self.explore, self.explore_pending
+                self.explore = False; self.explore_pending = False; self.steer.active = False
                 if was: self.core.event("AUTONOMY explore stopped (operator)")
-                return True, "Explore stopped: the FC holds the position"
-            if self.phase != "flying" or self.ctl.state != HoverState.HOVER:
-                return False, "Explore needs a steady hover first (take off and wait for HOLDING)"
-            if not self.steer.start():
-                return False, self.steer.error
-            self.steer.done = False; self.explore = True; self.steer.active = True
+                elif pend: self.core.event("AUTONOMY explore queue cancelled (operator)")
+                return True, "Explore cancelled" if (pend and not was) else "Explore stopped: the FC holds the position"
+            if self.phase != "flying" or self.ctl.state not in (HoverState.TAKEOFF, HoverState.SIGN_CHECK, HoverState.HOVER):
+                return False, "Explore needs the drone in flight: press TAKE OFF first (it starts by itself when the FC holds the height)"
+            if self.ctl.state != HoverState.HOVER:
+                self.explore_pending = True
+                queued = True
+            else:
+                queued = False
+                if not self.steer.start():
+                    return False, self.steer.error
+                self.steer.done = False; self.explore = True; self.steer.active = True
+        if queued:
+            self.core.event("AUTONOMY explore queued: it starts when the FC holds the height")
+            return True, "Explore queued: it starts by itself when the FC holds the height. LAND or SAFE cancel it."
         self.core.event("AUTONOMY explore started: steering from the explorer (udp 127.0.0.1:%d)" % self.steer.port)
         return True, "Explore on: the explorer steers, the FC holds the height. LAND or SAFE end it."
 
+    def _promote_explore(self) -> None:
+        """Called from controls() with the lock held: a queued EXPLORE starts when the height hold reports HOVER, and is dropped if the take-off ends in anything else."""
+        st = self.ctl.state
+        if st == HoverState.HOVER:
+            self.explore_pending = False
+            if self.steer.start():
+                self.steer.done = False; self.explore = True; self.steer.active = True
+                self.core.event("AUTONOMY explore started (queued): steering from the explorer (udp 127.0.0.1:%d)" % self.steer.port)
+            else:
+                self.message = f"explore not started: {self.steer.error}"; self.core.event("AUTONOMY " + self.message)
+        elif st not in (HoverState.TAKEOFF, HoverState.SIGN_CHECK):
+            self.explore_pending = False; self.core.event(f"AUTONOMY explore queue cancelled (state {st.value})")
+
     def _explore_off(self, why: str) -> None:
+        if self.explore_pending:
+            self.explore_pending = False; self.core.event(f"AUTONOMY explore queue cancelled ({why})")
         if self.explore:
             self.explore = False; self.steer.active = False; self.core.event(f"AUTONOMY explore stopped ({why})")
 
@@ -341,6 +368,8 @@ class HoverAutonomy:
             self.ctl.set_flight_mode(self.flight_mode)
             cmd = self.ctl.update(now, samples, dt)
             self._drain_ctl_events()
+            if self.explore_pending:
+                self._promote_explore()
             if self.explore:
                 if self.ctl.state != HoverState.HOVER:
                     self._explore_off(f"height hold left HOVER ({self.ctl.state.value})")
@@ -395,5 +424,5 @@ class HoverAutonomy:
             return {"phase": self.phase, "state": self.ctl.state.value, "z_m": self.ctl.z, "range_hz": rate, "gap_s": gap,
                     "batt_v": self.ctl.batt_v, "reason": self.ctl.reason, "message": self.message,
                     "events": [str(e[1]) for e in self.ctl.events[-4:]], "fc_armed": self.fc_armed,
-                    "xy_source": self.ctl.xy_active, "explore": self.explore, "steer_hz": self.steer.rate_hz() if self.steer.running else 0.0,
+                    "xy_source": self.ctl.xy_active, "explore": self.explore, "explore_pending": self.explore_pending, "steer_hz": self.steer.rate_hz() if self.steer.running else 0.0,
                     "rest_tilt": (None if (self.att_deg is None or now - self.att_deg[2] > 3.0) else (self.att_deg[0], self.att_deg[1]))}

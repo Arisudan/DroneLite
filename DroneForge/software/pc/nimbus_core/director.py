@@ -406,7 +406,7 @@ class FlightDirector:
         return Result(False, "Refused: " + "; ".join(bad)) if bad else Result(True, f"Hold height {h:.2f} m")
 
     def explore(self, on: bool) -> Result:
-        """EXPLORE on/off: the PC explorer steers (nimbus_core/steering.py) while the FC holds the height. Refused unless holding; LAND / SAFE end it."""
+        """EXPLORE on/off: the PC explorer steers (nimbus_core/steering.py) while the FC holds the height. Queued during the take-off (starts when the FC holds the height), refused on the ground; LAND / SAFE end it."""
         if not self.core.connected:
             return Result(False, "Not connected")
         ok, msg = self._au.set_explore(bool(on))
