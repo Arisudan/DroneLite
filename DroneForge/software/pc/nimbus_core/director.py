@@ -336,7 +336,7 @@ class FlightDirector:
         if not au.arm():
             self._revoke()
             return Result(False, au.message or "Cannot arm")
-        return Result(True, "Arming: gyro and level calibration (keep still), then motors idle")
+        return Result(True, "Arming: gyro calibration (keep still), then motors idle")
 
     @_command("disarm")
     def disarm(self) -> Result:

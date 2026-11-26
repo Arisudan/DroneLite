@@ -212,6 +212,7 @@ class TestLevelCalibrationAtArm(unittest.TestCase):
         core.safety = type("S", (), {"disarm_latched": None, "cfg": type("K", (), {})(), "pitch": pitch, "roll": roll})(); core.event = lambda t, *a, **k: self_events.append(t)
         core.bus = type("B", (), {"subscribe": lambda self, *a, **k: None})()
         au = HoverAutonomy(core); au.phase = "arming"; au._t_arm = 100.0; au._arm_only = True; au._est_reset = False; au.gyro_cal_before_arm = True
+        au.level_cal_before_arm = True          # the feature is OFF by default; these tests switch it on
         return au, self_events
 
     def test_level_stage_runs_between_gyro_and_countdown_when_the_drone_rests_level(self):

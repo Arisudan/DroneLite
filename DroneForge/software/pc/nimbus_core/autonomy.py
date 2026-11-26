@@ -56,7 +56,7 @@ class HoverAutonomy:
         self._arm_only = False; self._t_armlost = None
         self.fc_mode = ""
         self._est_reset = False
-        self.level_cal_before_arm = True; self._lc = None
+        self.level_cal_before_arm = False; self._lc = None      # OFF 2026-11-26 (it recalibrates on whatever the floor tilt is: the drift direction flipped after it was added); level once by hand in SETUP > Calibration
         self.gyro_cal_before_arm = True           # recalibrate the FC gyro right before every arming (stick gesture, disarmed)
         self.att_deg = None                      # (pitch, roll, time) the FC reports: at rest on the ground this is the "rest tilt"
         self.message = ""
