@@ -126,3 +126,6 @@ v4.7.4R + the v4.5 numbers: height gains 0.9923 / 0.10 / 0.04, sideways kp 2.5 /
 
 ## 5z (2026-11-26 15:30) EKF forward/right SWAPPED; firmware v4.8.1 BUILT, NOT FLASHED
 Guided bench test (tools_scripts/ekf_bench_live.py --guided): forward move -> EKF right +, right move -> EKF forward +. kinematicEstimatorGetBodyVelocity swapped in v4.8.1 (builds/2026-11-26_fc-hybrid-v4.8.1_BUILT_NOT-FLASHED). Verify with --guided after the flash, before flying. VO (right/back) agreed with the user's eyes; the EKF did not.
+
+## 6a (2026-11-26 16:25) firmware v4.8.2 BUILT, NOT FLASHED: v4.8.1 + stiff height gains (1.40/0.15/0.06)
+Reason: POS HOLD + VO flight on v4.8.1 held 55 s with the VO aid active (FC: 73 % of airborne time) but the height bobbed +-0.2 m (10 s period) and the range dropout above ~0.6-0.7 m caused an auto-land. v4.7.4R (stiff gains) had height sd 0.035-0.054 m on 11-25 (short flights). Flash only on the owner's word; back = v4.8.1.
