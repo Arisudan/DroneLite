@@ -123,3 +123,6 @@ v4.7.4R + the v4.5 numbers: height gains 0.9923 / 0.10 / 0.04, sideways kp 2.5 /
 - FC v4.8 BUILT, NOT FLASHED (builds/2026-11-26_fc-hybrid-v4.8_BUILT_NOT-FLASHED, base R1): take-off creep start 0.82 -> 0.92, aid usable in the climb, state frame 26 -> 20 bytes. UPDATE THE GCS BEFORE FLASHING. Read its README.
 - Bobbing: replay of the 11-25 flights shows throttle still rising during the falls: not commanded by the take-off law. Needs the FC blackbox (motors, gyro).
 - This laptop CAN build firmware: toolchain in ~/droneforge/bf_fixed/repo/tools; R1 reproduced from bf_fixed + R1 src.
+
+## 5z (2026-11-26 15:30) EKF forward/right SWAPPED; firmware v4.8.1 BUILT, NOT FLASHED
+Guided bench test (tools_scripts/ekf_bench_live.py --guided): forward move -> EKF right +, right move -> EKF forward +. kinematicEstimatorGetBodyVelocity swapped in v4.8.1 (builds/2026-11-26_fc-hybrid-v4.8.1_BUILT_NOT-FLASHED). Verify with --guided after the flash, before flying. VO (right/back) agreed with the user's eyes; the EKF did not.

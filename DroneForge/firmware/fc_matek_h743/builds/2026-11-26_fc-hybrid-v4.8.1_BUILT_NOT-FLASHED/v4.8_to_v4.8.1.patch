@@ -1,0 +1,13 @@
+--- /dev/fd/63	2026-11-26 15:28:10.107710670 +0530
++++ src/kinematic_estimator.c	2026-11-26 15:28:10.106224562 +0530
+@@ -682,7 +682,9 @@
+   /* the same rotation as the flow measurement model (h_4): R(q) * state velocity; forward = px, right = py */
+   const float px = (2*q[0]*q[3] + 2*q[1]*q[2])*st[4] + (-2*q[0]*q[2] + 2*q[1]*q[3])*st[5] + (q[1]*q[1] - q[2]*q[2] + q[0]*q[0] - q[3]*q[3])*st[3];
+   const float py = (-2*q[0]*q[3] + 2*q[1]*q[2])*st[3] + (2*q[0]*q[1] + 2*q[2]*q[3])*st[5] + (-q[1]*q[1] + q[2]*q[2] + q[0]*q[0] - q[3]*q[3])*st[4];
+-  *forward = px; *right = py;
++  /* v4.8.1 (2026-11-26): the guided bench test (ekf_bench_live.py --guided, 8 moves of 0.5 m, repeated twice) showed forward and right SWAPPED: moving the drone forward gave right +0.28 / +0.47,
++   * moving it right gave forward +0.26 / +0.23, back / left the same with minus. px is the drone's RIGHT, py its FORWARD. This getter feeds the sideways hold, the state frame and DF_HOLD. */
++  *forward = py; *right = px;
+   return isfinite(px) && isfinite(py);
+ }
+ 
