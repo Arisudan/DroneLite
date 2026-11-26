@@ -53,7 +53,7 @@ class HoldLog:
         if not getattr(c, "connected", False) or (not self.explicit and getattr(c, "state_source", "") != "live"):
             self.close(); return
         now = self.clock(); armed = bool(getattr(c.autonomy, "fc_armed", False))
-        if now - self._last < (0.1 if (armed or getattr(sent, "arm", False)) else 1.0) and not self.events: return
+        if now - self._last < (0.1 if (armed or getattr(sent, "arm", False)) else 0.25) and not self.events: return
         self._last = now
         if self.f is None: self._open()
         L = self.last; kin = L.get("kinematic") or {}; att = L.get("attitude") or {}; rg = L.get("optrange") or {}; fm = L.get("flight_mode") or {}

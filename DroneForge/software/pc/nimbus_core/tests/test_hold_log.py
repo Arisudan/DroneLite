@@ -21,7 +21,7 @@ class TestHoldLog(unittest.TestCase):
         d = tempfile.mkdtemp(); core = NimbusCore(); core.connect_sim(); self.addCleanup(core.disconnect)
         t = [0.0]; hl = HoldLog(core, d, clock=lambda: t[0])
         for i in range(30): t[0] += 0.1; hl.sample(Controls())
-        hl.close(); self.assertLessEqual(len(list(csv.reader(open(hl.path)))), 5)
+        hl.close(); self.assertLessEqual(len(list(csv.reader(open(hl.path)))), 14)
 
 
 if __name__ == "__main__":
