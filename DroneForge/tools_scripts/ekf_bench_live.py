@@ -33,10 +33,40 @@ def word(v: float, pos: str, neg: str) -> str:
     return f"{pos:>7s}" if v > 0.05 else (f"{neg:>7s}" if v < -0.05 else f"{'-':>7s}")
 
 
+STEPS = [("FORWARD (toward the nose)", "fwd", +1), ("BACK to the start", "fwd", -1), ("to the RIGHT (its right side)", "right", +1), ("BACK to the start", "right", -1),
+         ("FORWARD again", "fwd", +1), ("BACK to the start", "fwd", -1), ("to the RIGHT again", "right", +1), ("BACK to the start", "right", -1)]
+WINDOW_S, TRUE_M = 6.0, 0.5
+
+
+def guided(core, sleep=time.sleep, ask=input) -> int:
+    """Eight prompted moves of 0.5 m. For each one the EKF velocity is integrated over a 6 s window: the sign says whether the axis is right, the size says the scale."""
+    print("GUIDED EKF TEST (disarmed). Hold the drone level ~20 cm over a textured surface, nose at a fixed spot, do not turn it.")
+    print("For each step: press Enter, count 3-2-1, then slide the drone slowly (about 3 s) exactly 0.5 m in the named direction and keep it still until the next prompt.\n")
+    res = {"fwd": [], "right": []}
+    for i, (name, axis, sgn) in enumerate(STEPS, 1):
+        ask(f"step {i}/{len(STEPS)}: move {name} 0.5 m.  Enter to start > ")
+        for c in (3, 2, 1): print(f"  {c}"); sleep(1.0 if c else 0)
+        print("  GO (move now, slowly)"); t0 = time.monotonic(); dx = dy = 0.0; last = t0
+        while time.monotonic() - t0 < WINDOW_S:
+            core.tick(); sleep(0.02); now = time.monotonic(); kin = core.hold_log.last.get("kinematic") or {}
+            if kin.get("vx_mps") is not None: dx += kin["vx_mps"] * (now - last); dy += kin["vy_mps"] * (now - last)
+            last = now
+        d = dx if axis == "fwd" else dy; off = dy if axis == "fwd" else dx
+        res[axis].append(d * sgn)                                              # positive = the EKF agrees with the direction you were told
+        print(f"  EKF measured: forward {dx:+.2f} m, right {dy:+.2f} m   -> {'AGREES' if d * sgn > 0.15 else 'OPPOSITE' if d * sgn < -0.15 else 'unclear'} (expected {axis} {sgn:+d}, other axis {off:+.2f})\n")
+    print("=== VERDICT ===")
+    for axis, label in (("fwd", "forward"), ("right", "right")):
+        v = res[axis]; m = sum(v) / len(v) if v else 0.0
+        sign = "SIGN OK" if all(x > 0.15 for x in v) else "INVERTED" if all(x < -0.15 for x in v) else "MIXED / unclear (move more slowly and cleanly, repeat)"
+        print(f"  {label:8s} axis: {sign}; mean measured {m:+.2f} m for a true {TRUE_M:.1f} m -> scale x{abs(m) / TRUE_M:.2f}")
+    return 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--port"); ap.add_argument("--sim", action="store_true", help="self-test on the simulator")
     ap.add_argument("--seconds", type=float, default=0.0, help="stop after this long (0 = until Ctrl+C)")
+    ap.add_argument("--guided", action="store_true", help="the script tells you each move (forward / back / right / left, 0.5 m) and prints the verdict for the EKF sign and scale")
     a = ap.parse_args()
     core = NimbusCore()
     if a.sim:
@@ -45,6 +75,9 @@ def main() -> int:
         port = a.port or next(iter(sorted(glob.glob("/dev/serial/by-id/*CP2102*"))), None)
         if not port: print("no radio dongle found in /dev/serial/by-id (is the GCS still running? close it first)"); return 1
         core.connect(port)
+    if a.guided:
+        try: return guided(core)
+        finally: core.hold_log.close(); core.disconnect(); print("hold log:", core.hold_log.path)
     print("connected. DISARMED ONLY. Move the drone by hand; Ctrl+C to stop.\n")
     print("   t    range  fwd m/s  right m/s   direction              | move since still: fwd m   right m")
     t0 = time.monotonic(); next_print = 0.0; last_t = t0; px = py = 0.0; still_since = None; moving = False
