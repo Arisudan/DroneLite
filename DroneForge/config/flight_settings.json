@@ -6,7 +6,7 @@
   "batt_ref_v": 13.8,
   "creep_per_s": 0.0074,
   "xy_source": "fc",
-  "battery_scale": 1.22,
+  "battery_scale": 1.0,
   "ceiling_m": 1.0,
   "profile": "fc"
 }

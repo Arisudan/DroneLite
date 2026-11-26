@@ -40,6 +40,7 @@ def decode_blockers(payload: bytes) -> Optional[list]:
 
 
 ARMED_PERIOD_S = 3.0
+PROBE_SEQ = (105, 105, 105, 150, 105, 105, 105, 104)       # disarmed: the channel read-back 6 of 8 asks (it was 2 of 4: 0.4 Hz, below the 0.5 Hz it needs), arming flags and motors once each
 
 
 class RadioFcProbe:
@@ -90,7 +91,7 @@ class RadioFcProbe:
         n = 0
         while not self._stop.is_set():
             try:
-                r = self._ask(105 if self.armed else (105, 104, 105, 150)[n % 4])          # armed: only the channel read-back (the hold log needs it), nothing else
+                r = self._ask(105 if self.armed else PROBE_SEQ[n % len(PROBE_SEQ)])          # armed: only the channel read-back (the hold log needs it), nothing else
             except OSError:                       # the radio dongle went away (unplugged, reset, or the GCS is closing): stop quietly, the link watchdog reports it
                 self._stop.set(); break
             if r:

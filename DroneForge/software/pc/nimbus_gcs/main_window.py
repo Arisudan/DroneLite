@@ -183,6 +183,13 @@ class MainWindow(QMainWindow):
         an = QPropertyAnimation(eff, b"opacity", lab); an.setDuration(self.FADE_MS); an.setStartValue(1.0); an.setEndValue(0.0); an.setEasingCurve(QEasingCurve.Type.OutCubic)
         an.finished.connect(lab.deleteLater); an.start(); self._fade = lab
 
+    def _mode_label(self, s) -> str:
+        """Top-bar MODE chip = what the pilot selected: EXPLORE while the explorer steers or is queued, else the ALT HOLD / POS HOLD tile; '--' when not connected."""
+        if not s.get("connected"): return "--"
+        au = self.model.core.autonomy
+        if getattr(au, "explore", False) or getattr(au, "explore_pending", False): return "EXPLORE"
+        return {"alt_hold": "ALT HOLD", "pos_hold": "POS HOLD", "stabilize": "STABILIZE"}.get(getattr(au, "flight_mode", ""), (s["mode"] or "--").rstrip("*"))
+
     def current_workspace(self) -> str:
         return self.WORKSPACES[self.stack.currentIndex()]
 
@@ -313,7 +320,9 @@ class MainWindow(QMainWindow):
             self.chip_link.set_value(f"{lq:.0f} %")
         pct, v = s["battery_pct"], s["battery_v"]
         self.chip_batt.set_battery(None if (pct is None or v is None) else pct, v)                  # amber below 30 %: a warning only
-        self.chip_mode.set_value((s["mode"] or "--").rstrip("*"))
+        self.chip_mode.set_value(self._mode_label(s))                                                 # the mode chosen in the GCS (ALT HOLD / POS HOLD / EXPLORE), not Betaflight's STAB text
+        try: self.chip_mode.setToolTip("Flight mode chosen in the GCS. The flight controller itself reports: " + ((s["mode"] or "--").rstrip("*")))
+        except Exception: pass                                                                       # noqa: BLE001
         armed = bool(s["mode"]) and not s["mode"].endswith("*")
         self.chip_arm.set_value("ARMED" if armed else "DISARMED" if s["connected"] else "--")
         self.chip_arm._icon = "unlock" if armed else "lock"; self.chip_arm.update()

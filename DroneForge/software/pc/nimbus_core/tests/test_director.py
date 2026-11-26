@@ -203,3 +203,26 @@ class TestStartSequence(unittest.TestCase):
     def test_simulator_skips_the_waiting(self):
         au = self._au(); au.core.state_source = "sim"
         c = au.controls(100.0); self.assertTrue(c.arm); self.assertFalse(au._est_reset)
+
+
+class TestLevelCalibrationAtArm(unittest.TestCase):
+    def _au(self, pitch, roll):
+        from nimbus_core.autonomy import HoverAutonomy
+        core = type("C", (), {})(); core.state_source = "live"; core.connected = True; core.allow_arm = True; core.source = "external"; self_events = []
+        core.safety = type("S", (), {"disarm_latched": None, "cfg": type("K", (), {})(), "pitch": pitch, "roll": roll})(); core.event = lambda t, *a, **k: self_events.append(t)
+        core.bus = type("B", (), {"subscribe": lambda self, *a, **k: None})()
+        au = HoverAutonomy(core); au.phase = "arming"; au._t_arm = 100.0; au._arm_only = True; au._est_reset = False; au.gyro_cal_before_arm = True
+        return au, self_events
+
+    def test_level_stage_runs_between_gyro_and_countdown_when_the_drone_rests_level(self):
+        au, ev = self._au(0.4, -0.3)
+        au.controls(104.5)                                                              # gyro stage is 4 s: now the level stage
+        c = au.controls(105.0); self.assertFalse(c.arm); self.assertEqual(c.throttle, 1.0); self.assertEqual((c.pitch, c.yaw), (-1.0, -1.0)); self.assertIn("Level calibration", au.message)
+        c = au.controls(108.0); self.assertFalse(c.arm); self.assertEqual(c.throttle, 0.0); self.assertIn("Level calibration", au.message)      # gesture over: sticks centred while the FC measures
+        au.controls(110.5); self.assertTrue(au.message.startswith("Starting in"))
+        self.assertTrue(any("level calibration at arm" in e for e in ev))
+
+    def test_tilted_drone_skips_it_and_never_sends_throttle_full(self):
+        au, ev = self._au(6.0, 0.0)
+        for t in (104.5, 105.0, 107.0, 108.0): c = au.controls(t); self.assertEqual(c.throttle, 0.0)
+        self.assertTrue(au.message.startswith("Starting in")); self.assertTrue(any("skipped" in e and "off level" in e for e in ev))

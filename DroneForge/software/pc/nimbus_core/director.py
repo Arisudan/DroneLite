@@ -136,7 +136,7 @@ def _command(name: str):
 
 
 class FlightDirector:
-    ARM_DEADLINE_S, ARM_DEADLINE_SIM_S = 4.0 + 3.0 + 8.0, 6.0      # gyro cal + countdown + margin
+    ARM_DEADLINE_S, ARM_DEADLINE_SIM_S = 4.0 + 6.0 + 3.0 + 8.0, 6.0      # gyro cal + level cal + countdown + margin
     TAKEOFF_EXTRA_S, DISARM_DEADLINE_S, LAND_DEADLINE_S = 10.0, 5.0, 45.0
     _IMMEDIATE = ("safe", "set_height")
 
@@ -336,7 +336,7 @@ class FlightDirector:
         if not au.arm():
             self._revoke()
             return Result(False, au.message or "Cannot arm")
-        return Result(True, "Arming: gyro calibration (keep still), then motors idle")
+        return Result(True, "Arming: gyro and level calibration (keep still), then motors idle")
 
     @_command("disarm")
     def disarm(self) -> Result:

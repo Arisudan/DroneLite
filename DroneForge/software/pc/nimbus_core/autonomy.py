@@ -39,6 +39,8 @@ def to_sample(name: str, d: dict, now: float) -> Optional[Sample]:
 
 class HoverAutonomy:
     ARM_TIMEOUT_S = 8.0
+    LEVEL_CAL_S = 6.0                        # accelerometer level calibration at arm: gesture 2.5 s + the FC measures and saves ~3 s (owner 2026-11-26)
+    LEVEL_MAX_TILT_DEG = 3.0                 # only when the drone already rests within this of level: on a tilted spot it would bake the tilt in
     GYRO_CAL_S = 4.0                         # gyro-calibration gesture + stillness before the arm command
     COUNTDOWN_S = 3.0                        # 3-2-1 before the arm command on the real drone (Nimbus Start sequence: gyro cal -> countdown -> estimator reset -> arm)
 
@@ -54,6 +56,7 @@ class HoverAutonomy:
         self._arm_only = False; self._t_armlost = None
         self.fc_mode = ""
         self._est_reset = False
+        self.level_cal_before_arm = True; self._lc = None
         self.gyro_cal_before_arm = True           # recalibrate the FC gyro right before every arming (stick gesture, disarmed)
         self.att_deg = None                      # (pitch, roll, time) the FC reports: at rest on the ground this is the "rest tilt"
         self.message = ""
@@ -160,7 +163,7 @@ class HoverAutonomy:
         if why:
             self.message = "arming refused: " + "; ".join(why); self.core.event("AUTONOMY " + self.message); return False
         with self._lock:
-            self.phase, self._t_arm, self._t_last, self._buf, self._arm_only, self._t_armlost, self._est_reset = "arming", time.monotonic(), None, [], True, None, False
+            self.phase, self._t_arm, self._t_last, self._buf, self._arm_only, self._t_armlost, self._est_reset = "arming", time.monotonic(), None, [], True, None, False; self._lc = None
         self.message = "arming at zero throttle (motors will idle)"
         self.core.event("AUTONOMY ARM requested: arming at zero throttle")
         return True
@@ -241,7 +244,7 @@ class HoverAutonomy:
                 self.message = "takeoff refused: " + "; ".join(self.ctl.refused); self.core.event("AUTONOMY " + self.message)
                 self._drain_ctl_events()
                 return False
-            self.phase, self._t_arm, self._t_last, self._buf, self._arm_only, self._est_reset = "arming", time.monotonic(), None, [], False, False
+            self.phase, self._t_arm, self._t_last, self._buf, self._arm_only, self._est_reset = "arming", time.monotonic(), None, [], False, False; self._lc = None
         self.message = "arming at zero throttle"
         self.core.event("AUTONOMY takeoff requested: arming at zero throttle")
         return True
@@ -309,6 +312,16 @@ class HoverAutonomy:
             self.ctl = self._new_ctl(); self.flight_mode = "pos_hold"
         self.message = "aborted"
 
+    def _level_cal_plan(self) -> float:
+        """Seconds of level calibration to run before this arming (0 = skipped, with the reason as an event)."""
+        sf = getattr(self.core, "safety", None); pitch, roll = getattr(sf, "pitch", None), getattr(sf, "roll", None)
+        if pitch is None or roll is None:
+            self.core.event("AUTONOMY level calibration skipped: no attitude from the FC"); return 0.0
+        tilt = max(abs(pitch), abs(roll))
+        if tilt > self.LEVEL_MAX_TILT_DEG:
+            self.core.event(f"AUTONOMY level calibration skipped: the drone rests {tilt:.1f} deg off level (limit {self.LEVEL_MAX_TILT_DEG:.0f}); put it on a flat surface"); return 0.0
+        self.core.event(f"AUTONOMY level calibration at arm (rest tilt {tilt:.1f} deg): keep the drone still"); return self.LEVEL_CAL_S
+
     # --- control tick (called by the core while source == external and phase in arming/flying) --
     def controls(self, now: float) -> Controls:
         with self._lock:
@@ -322,6 +335,16 @@ class HoverAutonomy:
                     if el < 1.6 and not self.fc_armed:
                         return Controls(pitch=-1.0, yaw=-1.0)
                     return Controls()
+                lc = 0.0
+                if real and self.level_cal_before_arm and not self.fc_armed:
+                    if self._lc is None: self._lc = self._level_cal_plan()
+                    lc = self._lc
+                if gc <= el < gc + lc:                      # 1b) accelerometer level calibration (disarmed, arm LOW: the throttle-full gesture cannot spin the motors)
+                    self.message = f"Level calibration: keep the drone still ({gc + lc - el:.0f} s)"
+                    if el - gc < 2.5 and not self.fc_armed:
+                        return Controls(pitch=-1.0, yaw=-1.0, throttle=1.0)
+                    return Controls()
+                gc += lc
                 if el < gc + cd:                            # 2) countdown, still disarmed
                     self.message = f"Starting in {max(1, math.ceil(gc + cd - el))}..."
                     return Controls()
