@@ -1,0 +1,22 @@
+--- /home/htic/Music/DroneForge/firmware/fc_matek_h743/builds/2026-11-25_fc-hybrid-v4.7.4R_BUILT_NOT-FLASHED/src/height_hold_core.c	2026-11-25 12:00:57.589631466 +0530
++++ src/height_hold_core.c	2026-11-26 10:13:15.466228659 +0530
+@@ -18,7 +18,7 @@
+ 
+ void hhDefaults(hhParams_t *p)
+ {
+-    p->kp_z = 1.40f; p->kv_z = 0.15f; p->ki_z = 0.06f; p->i_max = 0.20f;      /* v4.7.3R: ki 0.06 as v4.6-rev1 (v4.7.1 / v4.7.2: 0.15) */      /* v4.6 tighter height hold (was kp 0.9923, kv 0.10, ki 0.04): stiffer tracking and firmer vertical damping */
++    p->kp_z = 0.9923f; p->kv_z = 0.10f; p->ki_z = 0.04f; p->i_max = 0.20f;      /* v4.7.4R1: the v4.5 height gains (v4.6 / v4.7.4R: 1.40 / 0.15 / 0.06) */      /* v4.6 tighter height hold (was kp 0.9923, kv 0.10, ki 0.04): stiffer tracking and firmer vertical damping */
+     p->vz_lim = 0.4581f; p->climb_peak_frac = 0.45f; p->descent_peak_frac = 0.45f;      /* v4.7.3R: 0.45 as v4.6-rev1 (v4.7.1 / v4.7.2: 0.35) */
+     p->thr_idle = 0.05f; p->thr_max = 0.85f; p->drop_max = 0.30f;
+     p->overshoot_m = 0.10f; p->overshoot_vz = 0.40f; p->overshoot_cut = 0.08f;
+--- /home/htic/Music/DroneForge/firmware/fc_matek_h743/builds/2026-11-25_fc-hybrid-v4.7.4R_BUILT_NOT-FLASHED/src/xy_hold_core.c	2026-11-25 12:00:57.591497713 +0530
++++ src/xy_hold_core.c	2026-11-26 10:13:15.476389402 +0530
+@@ -6,7 +6,7 @@
+ 
+ void xyDefaults(xyParams_t *p)
+ {
+-    p->kv = 5.0f; p->kp = 2.4f; p->ki = 0.15f; p->max_deg = 4.0f; p->min_z = 0.06f; p->test_z = 0.08f;      /* v4.7.3R: the v4.6-rev1 gains again (v4.7 / v4.7.2 had 7 / 6 / 0.6) */
++    p->kv = 5.0f; p->kp = 2.5f; p->ki = 0.10f; p->max_deg = 4.0f; p->min_z = 0.06f; p->test_z = 0.08f;      /* v4.7.3R: the v4.6-rev1 gains again (v4.7 / v4.7.2 had 7 / 6 / 0.6) */
+     p->test_deg = 2.5f; p->test_s = 0.8f; p->test_min_dv = 0.08f; p->calm_speed = 0.50f; p->calm_s = 0.5f;
+     p->runaway_speed = 1.0f; p->runaway_s = 1.0f; p->runaway_pos = 2.5f;
+     p->skip_test = 1.0f;

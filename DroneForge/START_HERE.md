@@ -75,6 +75,7 @@ Channels 9-16 are only carried with ELRS **100Hz Full + Switch Mode 16ch Rate/2*
 | v4.7.1, v4.7.2 | built | v4.7.2 reads the aid from RC channels CH13-15 |
 | v4.7.3R | flashed 2026-11-24 | rev1 values + VO aid |
 | **v4.7.4R** | **flashed on the drone (confirmed over USB 2026-11-25: build "Nov 25 2026 11:40:56", `debug_mode = DF_HOLD`)** | level-trim learning during the climb; debug mode `DF_HOLD` (debug[0..3] = EKF velocity fwd/right mm/s, VO aid fwd/right mm, -32768 = no fresh aid) |
+| **v4.7.4R1** | built 2026-11-26, **not flashed, not flown** | v4.7.4R with the v4.5 height gains (0.9923 / 0.10 / 0.04) and sideways kp 2.5 / ki 0.10; the learned trim is kept (the simulation shows it, not the gains, removes the drift) |
 Flash with `python3 tools_scripts/df.py flash <fw.bin> [--debug-hold]` (owner go-ahead first; FC on USB, battery off, disarmed). Each build folder has its README, sources, patch and checksums; Betaflight source work tree lives outside the repo (`~/droneforge/bf_v473R/repo`, toolchain `~/droneforge/toolchain_x86`). The simulator loads the same control code as shared libraries (`gazebo/controllers/libhh_*.so`, selector `DF_FW=v474r`).
 FC facts: serial port 2 = 262144 (MTF-02P) — Betaflight Configurator's Ports tab resets it; never enter the CLI within 60 s of power-up and note CLI `exit` reboots; the CLI pauses telemetry while open; FC USB must be unplugged to arm.
 

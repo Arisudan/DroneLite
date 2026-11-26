@@ -30,7 +30,7 @@ from std_msgs.msg import String
 #   rev1 = v4.6-rev1 (FLASHED on the drone, not yet flown); the last FLOWN build is v4.6
 HERE = os.path.dirname(os.path.abspath(__file__))
 DF_FW = os.environ.get("DF_FW", "v47")
-SO_PATH = os.path.join(HERE, {"v47": "libhh_v47.so", "v471": "libhh_v471.so", "v472": "libhh_v471.so", "v473r": "libhh_v473R.so", "v474r": "libhh_v474R.so", "rev1": "libhh_v46rev1.so"}.get(DF_FW, "libhh.so"))      # v471 = v4.7.1 (2026-11-24: height-change feed-forward)
+SO_PATH = os.path.join(HERE, {"v47": "libhh_v47.so", "v471": "libhh_v471.so", "v472": "libhh_v471.so", "v473r": "libhh_v473R.so", "v474r": "libhh_v474R.so", "v474r1": "libhh_v474R1.so", "rev1": "libhh_v46rev1.so"}.get(DF_FW, "libhh.so"))      # v471 = v4.7.1 (2026-11-24: height-change feed-forward)
 if not os.path.exists(SO_PATH):
     SO_PATH = os.path.expanduser("~/Music/DroneForge/tools_scripts/fc_hold_sim/libhh.so")
 
