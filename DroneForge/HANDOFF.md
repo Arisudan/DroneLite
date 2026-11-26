@@ -129,3 +129,6 @@ Guided bench test (tools_scripts/ekf_bench_live.py --guided): forward move -> EK
 
 ## 6a (2026-11-26 16:25) firmware v4.8.2 BUILT, NOT FLASHED: v4.8.1 + stiff height gains (1.40/0.15/0.06)
 Reason: POS HOLD + VO flight on v4.8.1 held 55 s with the VO aid active (FC: 73 % of airborne time) but the height bobbed +-0.2 m (10 s period) and the range dropout above ~0.6-0.7 m caused an auto-land. v4.7.4R (stiff gains) had height sd 0.035-0.054 m on 11-25 (short flights). Flash only on the owner's word; back = v4.8.1.
+
+## 6b (2026-11-26 16:50) firmware v4.8.3 BUILT, NOT FLASHED: motor-saturation-aware height hold + hold internals in DF_HOLD debug[4..7]
+v4.8.1 and v4.8.2 (different height gains) both bob +-0.2 m / 7-11 s: not the gains. The sim holds +-0.5 cm. Real hold: M2 at >=97 % for 11 % of the time, height falls -3.5 cm/s then; M2 92 % vs M3 69 % (CoG toward M2). v4.8.3 freezes the integral / throttle growth while a motor is saturated and logs z/vz/z_ref/integral. Flash only on the owner's word; back = v4.8.2.

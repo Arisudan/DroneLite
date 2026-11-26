@@ -14,6 +14,8 @@ void hh_set_target(float h) { hhSetTarget(&S, &P, h); }
 void hh_land(void) { hhLand(&S, &P); }
 void hh_follow(float dt, float fh, float vbat) { hhFollowBase(&S, &P, dt, fh, vbat); }
 float hh_update(float dt, float z, float vz, float vbat) { return hhUpdate(&S, &P, dt, z, vz, vbat); }
+void hh_set_motor_sat(int v) { S.motor_sat = v ? true : false; }
+float hh_f_out(void) { return S.f_out; }
 int hh_mode(void) { return S.mode; }
 int hh_active(void) { return S.active; }
 int hh_fail(void) { return S.fail; }

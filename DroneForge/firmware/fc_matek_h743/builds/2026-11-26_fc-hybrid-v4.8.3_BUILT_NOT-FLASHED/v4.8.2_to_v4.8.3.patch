@@ -1,0 +1,53 @@
+--- /home/htic/Music/DroneForge/firmware/fc_matek_h743/builds/2026-11-26_fc-hybrid-v4.8.2_BUILT_NOT-FLASHED/src/height_hold.c	2026-11-26 16:22:42.600877719 +0530
++++ src/height_hold.c	2026-11-26 16:48:59.002475985 +0530
+@@ -26,6 +26,7 @@
+ #include "flight/estimator_gates.h"
+ #include "sensors/opticalflow.h"
+ #include "sensors/rangefinder.h"
++#include "flight/mixer.h"
+ #include "flight/kinematic_estimator.h"
+ 
+ #include "rx/rx.h"
+@@ -231,7 +232,16 @@
+     const float dtc = constrainf(dt, 0.005f, 0.1f);
+     const float vbat = getBatteryVoltageLatest() * 0.01f;
+     if (rcData[HH_RC_BASE_CHANNEL] >= HH_US_OFF && fabsf(vz) < 0.3f) hhFollowBase(&hhState, &hhParams, dtc, throttleFractionFromUs((float)rcData[HH_RC_BASE_CHANNEL]), vbat);
++    {   /* v4.8.3: is a motor at its output limit (the previous cycle's mixer output)? */
++        const float lo = getMotorOutputLow(), hi = getMotorOutputHigh(); float mx = lo;
++        for (uint8_t i = 0; i < getMotorCount(); i++) if (motor[i] > mx) mx = motor[i];
++        hhState.motor_sat = (hi > lo) && ((mx - lo) / (hi - lo) >= 0.97f);
++    }
+     const float f = hhUpdate(&hhState, &hhParams, dtc, zr, vz, vbat);
++    DEBUG_SET(DEBUG_DF_HOLD, 4, (int16_t)constrainf(lrintf(zr * 1000.0f), -32767.0f, 32767.0f));                       /* v4.8.3: the hold's own height (EKF, above the ground reference) mm */
++    DEBUG_SET(DEBUG_DF_HOLD, 5, (int16_t)constrainf(lrintf(vz * 1000.0f), -32767.0f, 32767.0f));                       /* its vertical speed mm/s */
++    DEBUG_SET(DEBUG_DF_HOLD, 6, (int16_t)constrainf(lrintf(hhState.z_ref * 1000.0f), -32767.0f, 32767.0f));            /* the reference it follows mm */
++    DEBUG_SET(DEBUG_DF_HOLD, 7, (int16_t)constrainf(lrintf((hhState.integ_dbg * 1000.0f)) + (hhState.motor_sat ? 10000 : 0), -32767.0f, 32767.0f));   /* integral x1000 (+10000 while a motor is saturated) */
+     if (hhState.fail) { release(true); return; }                              /* take-off never lifted: the PC takes over and disarms */
+     if (hhState.landed && f <= hhParams.thr_idle + 0.001f) { release(false); hhLandLatch = true; return; }
+     hhRcThrottle = rcCommandFromFraction(f);
+--- /home/htic/Music/DroneForge/firmware/fc_matek_h743/builds/2026-11-26_fc-hybrid-v4.8.2_BUILT_NOT-FLASHED/src/height_hold_core.c	2026-11-26 16:22:42.601992460 +0530
++++ src/height_hold_core.c	2026-11-26 16:48:59.004911459 +0530
+@@ -186,8 +186,11 @@
+     const bool sat_hi = f_unsat >= p->thr_max && e > 0.0f;
+     const bool sat_lo = f_unsat <= base - p->drop_max && e < 0.0f;
+     /* near the floor the integrator may only grow (so a drone that settled back on the floor can lift again), bounded by i_max */
+-    if ((z > 0.05f || e > 0.0f) && !sat_hi && !sat_lo) s->integ = clampf_(s->integ + p->ki_z * e * dt, -p->i_max, p->i_max);
++    const bool motor_sat_up = s->motor_sat && e > 0.0f && s->mode == HH_MODE_HOLD;      /* v4.8.3: a motor is at its limit and the drone is below the target: more throttle only winds the integral up (the mixer cannot give the thrust) */
++    if ((z > 0.05f || e > 0.0f) && !sat_hi && !sat_lo && !motor_sat_up) s->integ = clampf_(s->integ + p->ki_z * e * dt, -p->i_max, p->i_max);
+     float f = base + p->kv_z * (vz_ref - vz) + s->integ;
++    if (motor_sat_up && f > s->f_out) f = s->f_out;                                    /* v4.8.3: do not ask for more than what already saturated a motor */
++    s->integ_dbg = s->integ;
+     /* v4.7.1: acceleration feed-forward while a height change runs (thrust ~ u^2, so du = (f_base - idle) * a / 2g). Bench 2026-11-24: step overshoot 42 -> 21 mm */
+     if (s->mode == HH_MODE_HOLD && s->trans) f += p->az_ff_gain * (s->f_base - p->thr_idle) * s->az_ff / (2.0f * 9.81f);
+     if (s->mode == HH_MODE_HOLD) {
+--- /home/htic/Music/DroneForge/firmware/fc_matek_h743/builds/2026-11-26_fc-hybrid-v4.8.2_BUILT_NOT-FLASHED/src/height_hold_core.h	2026-11-26 16:22:42.600915524 +0530
++++ src/height_hold_core.h	2026-11-26 16:48:59.007346242 +0530
+@@ -74,6 +74,8 @@
+     float t_liftdet;                     /* time the rise has lasted (s) */
+     float t_floor;                       /* time in the hold on the floor with the target above (s): sank back */
+     bool  cap_landing;                   /* the current landing was started by the thrust-limit rule */
++    bool  motor_sat;                     /* v4.8.3: set by height_hold.c every cycle: one motor is at its output limit, a higher throttle demand cannot add thrust (0 in the PC build) */
++    float integ_dbg;                     /* v4.8.3: copy of the integral for the debug log */
+ } hhState_t;
+ 
+ /* the MTF-02P over-reads by ~9 cm between ~20 and ~40 cm (measured; the PC controller corrects it with the same curve): height above the learned ground as READ -> true height above the ground */
