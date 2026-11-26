@@ -1,5 +1,7 @@
 # DroneForge: Nimbus replica
 
+> **Read `START_HERE.md` first**: the current overview of the whole project (architecture, rules, files, how to run, what is proven and what is not). The status below is the older 2026-11-02 snapshot.
+
 Own build of the Nimbus system (NimbusOS 2.9.0): PC software -> DIY 2.4 GHz TX dongle -> ELRS receiver -> Betaflight FC.
 Original analysis lives in `~/nimbus-elrs-analysis`. A backup of the layout before the 2026-11-02 reorganisation is `~/Music/DroneForge_before_reorg_2026-11-02.tar.gz`.
 
