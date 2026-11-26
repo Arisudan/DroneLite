@@ -545,3 +545,16 @@ class TestFlyPage(unittest.TestCase):
         self.assertIn("Range", first_blocker(cs)); self.assertIn("Range", disabled_reason("ready", cs)); self.assertEqual(disabled_reason("ready", []), "")
 
 
+
+
+class TestBatteryDisplayIsSteady(unittest.TestCase):
+    def test_jumping_fc_voltage_gives_a_steady_value_and_percentage(self):
+        from nimbus_gcs.model import GcsModel, battery_percent
+        m = GcsModel(); m.core.connect_sim(); self.addCleanup(m.disconnect)
+        import time as _t
+        seq = [13.1, 12.6, 13.2, 12.2, 13.3, 12.7, 13.0, 12.5, 13.2, 12.8]
+        shown = []
+        for v in seq:
+            m.state.decoded["battery"] = {"voltage_v": v}; m.sample(); shown.append(m._vbat()); _t.sleep(0.01)
+        self.assertLess(max(shown[3:]) - min(shown[3:]), 0.45)            # the raw readings span 1.1 V
+        self.assertLess(battery_percent(max(shown[3:]), 4) - battery_percent(min(shown[3:]), 4), 8.0)

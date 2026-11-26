@@ -97,6 +97,7 @@ class GcsModel:
         self.history: dict[str, deque] = {k: deque() for k in SERIES}
         self._t0 = time.monotonic()
         self._vbat_f: Optional[float] = None
+        self._vb_hist: deque = deque()                       # (time, volts) of each NEW battery frame, last 10 s
         self.trail: deque = deque(maxlen=900)
         bus = self.core.bus
         bus.subscribe(T.TELEMETRY, lambda m: self.state.note_decoded(*m))
@@ -218,9 +219,12 @@ class GcsModel:
         d = self.state.decoded
         v = d.get("battery", {}).get("voltage_v")
         if not self.connected:
-            self._vbat_f = None
-        elif v is not None:                                 # smooth (2 s time constant at 10 Hz) so the percentage does not jitter with throttle sag
-            self._vbat_f = v if self._vbat_f is None else self._vbat_f + 0.05 * (v - self._vbat_f)
+            self._vbat_f = None; self._vb_hist.clear()
+        elif v is not None:                                 # median of the new frames of the last 10 s: the FC reading jumps 0.4-0.9 V inside 10 s even at rest (2026-11-26 recording), the old 2 s smoothing let that through
+            now = time.monotonic()
+            if not self._vb_hist or v != self._vb_hist[-1][1] or now - self._vb_hist[-1][0] > 1.5: self._vb_hist.append((now, v))
+            while self._vb_hist and now - self._vb_hist[0][0] > 10.0: self._vb_hist.popleft()
+            vals = sorted(x[1] for x in self._vb_hist); self._vbat_f = vals[len(vals) // 2]
         vals = {
             "up_lq": d.get("link", {}).get("up_lq"), "down_lq": d.get("link", {}).get("down_lq"),
             "rssi": d.get("link", {}).get("up_rssi1_dbm"), "battery_v": display_vbat(d.get("battery", {}).get("voltage_v"), self._vscale()),
@@ -295,7 +299,7 @@ class GcsModel:
             "sender_alive": bool(s and s.sender.alive),
             "no_data_s": (now - max(lasts)) if lasts else ((now - st.t0) if s else 0.0),
             "lq": link.get("up_lq"), "rssi": link.get("up_rssi1_dbm"), "snr": link.get("up_snr_db"),
-            "battery_v": display_vbat(d.get("battery", {}).get("voltage_v"), self._vscale()),
+            "battery_v": self._vbat(),                                     # the same steady value as the percentage
             "battery_pct": None if self._vbat() is None else battery_percent(self._vbat(), self.core.safety.cfg.cells),
             "battery_cell_v": None if self._vbat() is None else self._vbat() / self.core.safety.cfg.cells, "mode": d.get("flight_mode", {}).get("mode"),
             "failsafe": bool(s and s.sender.failsafe_active),
