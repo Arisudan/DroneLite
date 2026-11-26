@@ -17,7 +17,7 @@ from .controller import HoverConfig, HoverController, HoverState
 TAKEOFF_TIMEOUT_S = 40.0      # the FC creep alone takes ~10-25 s
 STATUS_MAX_AGE_S = 1.0        # the hold status must be this fresh, or the firmware has no hold status frame (old build)
 LIFTED_M = 0.15
-ARRIVED_M = 0.06              # HOVER (GCS "holding") only within this of the target height, calm for 1 s
+ARRIVED_M = 0.10              # HOVER (GCS "holding") only within this of the target height, calm for 1 s (was 0.06: the 2026-11-26 flight settled 0.09 m low and waited ~4 s)
 AIR_GRACE_S = 8.0             # ... or after this long airborne in the FC hold, whatever the height (the take-off timeout never acts in the air)
 
 class FcHoldController(HoverController):

@@ -12,6 +12,7 @@ from . import theme as T
 from .vision_engine import ENGINES, LABELS, VisionProcess
 from .video_source import get_source
 from .fc_caps import AidSupport
+from nimbus_core.aid_policy import aid_active, ground_aid_enabled
 
 TIPS = {"depth": "Depth Anything 3 (metric) on the live video: colour overlay and the nearest distance",
         "detect": "Obstacles nearer than 1.0 m from the depth (6 x 8 cells); with models/detect.onnx people and objects",
@@ -100,7 +101,7 @@ class VisionBar(QWidget):
             phase = core.director.state().phase; exploring = bool(getattr(core.autonomy, "explore", False))
         except Exception:                                             # noqa: BLE001
             return "position aid: no flight state"
-        hovering = phase == "holding" and not exploring
+        hovering = aid_active(phase, exploring, ground_aid_enabled())      # holding only; with DF_GROUND_AID=1 from the floor (armed) on
         if not hovering and hasattr(core, "clear_pos_aid"): core.clear_pos_aid()
         self._t_hold = (self._t_hold or time.time()) if hovering else None
         fm = self.win.model.state.decoded.get("flight_mode") or {}

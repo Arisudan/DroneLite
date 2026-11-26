@@ -7,7 +7,7 @@ import numpy as np
 HERE = os.path.dirname(os.path.abspath(__file__)); G = 9.81
 XY_NAMES = ["kv", "kp", "ki", "max_deg", "min_z", "test_z", "test_deg", "test_s", "test_min_dv", "calm_speed", "calm_s", "runaway_speed", "runaway_s", "runaway_pos", "skip_test"]
 
-def run(L, seed, t_end=67.0, level_deg=(1.0, 0.0), over=None, sigma=0.081, scale_sd=0.03, flow_hz=25.0, delay=0.05, ekf_tau=0.10, aid=False, aid_hz=10.0, aid_sd=0.02, aid_delay=0.15, climb_s=7.0):
+def run(L, seed, t_end=67.0, level_deg=(1.0, 0.0), over=None, sigma=0.081, scale_sd=0.03, flow_hz=25.0, delay=0.05, ekf_tau=0.10, aid=False, aid_hz=10.0, aid_sd=0.02, aid_delay=0.15, climb_s=7.0, ground_aid=False, aid_start=1.0):
     rng = random.Random(seed); L.xy_defaults(); p = L.xy_params()
     for k, v in (over or {}).items(): p[XY_NAMES.index(k)] = v
     L.xy_start() if hasattr(L, "xy_start") else None
@@ -19,7 +19,8 @@ def run(L, seed, t_end=67.0, level_deg=(1.0, 0.0), over=None, sigma=0.081, scale
         hist.append((t, vel[0], vel[1])); phist.append((t, pos[0], pos[1]))
         if len(hist) > 200: hist.pop(0)
         if len(phist) > 300: phist.pop(0)
-        if aid and held and not braking and t - t_aid >= 1.0 / aid_hz:                      # PC visual odometry: displacement from the hold point (no yaw here: body = world)
+        aid_on = (aid and held and not braking) or (ground_aid and t >= aid_start)          # ground_aid (v4.8): the VO key frame is set on the ground and the aid flows from the climb on, the anchor is never moved
+        if aid_on and t - t_aid >= 1.0 / aid_hz:                      # PC visual odometry: displacement from the hold point (no yaw here: body = world)
             t_aid = t; o = min(phist, key=lambda h: abs(h[0] - (t - aid_delay))); aidv = (o[1] - anchor[0] + rng.gauss(0, aid_sd), o[2] - anchor[1] + rng.gauss(0, aid_sd))
         if t - t_flow >= 1.0 / flow_hz:
             t_flow = t; old = min(hist, key=lambda h: abs(h[0] - (t - delay)))
@@ -30,17 +31,19 @@ def run(L, seed, t_end=67.0, level_deg=(1.0, 0.0), over=None, sigma=0.081, scale
             if hold and not held:                                                   # the hand-over
                 if hasattr(L, "xy_brake"): L.xy_brake(); braking = True                # v4.7: brake first, the hold point is where it stopped
                 else: L.xy_reposition(); braking = False
-                held = True; anchor = list(pos); phist = [(t, 0.0, 0.0)]; aidv = None; t_hold = t
+                held = True; t_hold = t
+                if not ground_aid: anchor = list(pos); phist = [(t, 0.0, 0.0)]; aidv = None
             if held and braking and not L.xy_braking(): braking = False; anchor = list(pos); phist = [(t, 0.0, 0.0)]; aidv = None   # stopped: the GCS anchors its VO key frame by the same rule
             rel = (pos[0] - anchor[0], pos[1] - anchor[1]) if held else (0.0, 0.0)
-            if aid and held and not braking: L.xy_update_st(0.02, est[0], est[1], 0.8, 1, 0.0, 0.0, aidv is not None, aidv[0] if aidv else 0.0, aidv[1] if aidv else 0.0, out)
+            if ground_aid and t >= aid_start: L.xy_update_st(0.02, est[0], est[1], 0.8, 1 if hold else 0, 0.0, 0.0, aidv is not None, aidv[0] if aidv else 0.0, aidv[1] if aidv else 0.0, out)
+            elif aid and held and not braking: L.xy_update_st(0.02, est[0], est[1], 0.8, 1, 0.0, 0.0, aidv is not None, aidv[0] if aidv else 0.0, aidv[1] if aidv else 0.0, out)
             else: L.xy_update(0.02, est[0], est[1], 0.8, 1 if hold else 0, out)
             cmd = [out[1], out[0]]     # (pitch, roll) deg
         for a in (0, 1):
             tilt[a] += (cmd[a] - tilt[a]) * dt / 0.08
             vel[a] += (G * math.tan(math.radians(tilt[a])) + push[a] - 0.15 * vel[a]) * dt; pos[a] += vel[a] * dt
         t += dt; n += 1
-        if n % 500 == 0 and held: trace.append(math.hypot(pos[0] - anchor[0], pos[1] - anchor[1]))
+        if n % 500 == 0 and (held or ground_aid): trace.append(math.hypot(pos[0] - anchor[0], pos[1] - anchor[1]))
     return dict(max_d=max(trace), end_d=trace[-1], last20=np.mean(trace[-20:]), trace=trace)
 
 def bench(lib, over=None, seeds=20, **kw):

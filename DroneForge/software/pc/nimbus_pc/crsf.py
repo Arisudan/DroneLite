@@ -272,6 +272,20 @@ def decode_kinematic(p: bytes) -> Optional[dict]:
 
 
 STATE_PAYLOAD_BYTES = 20
+STATE2_PAYLOAD_BYTES = 14      # firmware v4.8: the shorter layout of the same frame type (telemetry/crsf_state_pack.h), told apart by its length
+
+
+def _s12(v: int) -> int:
+    return v - 0x1000 if v & 0x800 else v
+
+
+def decode_state_v48(p: bytes) -> dict:
+    """The 14 data bytes of the v4.8 state frame -> the same dict, in the same units, as the 20-byte frame."""
+    dist, flags, q, v0, v1, v2, vz, roll, pitch, yaw, fx, fy = struct.unpack(">hBBBBBbbbhbb", p[:STATE2_PAYLOAD_BYTES])
+    return {"dist_raw": dist, "flow_x_raw": fx * 2, "flow_y_raw": fy * 2, "flow_quality": q, "ekf_valid": bool(flags & 1), "flow_status": 1 if flags & 2 else 0,
+            "hold_active": bool(flags & 4), "hold_fault": bool(flags & 8), "hold_mode": (flags >> 4) & 3, "vel_body": bool(flags & 0x40), "xy_disabled": bool(flags & 0x80),
+            "vx_mm": _s12((v0 << 4) | (v1 >> 4)), "vy_mm": _s12(((v1 & 0x0F) << 8) | v2), "vz_mm": vz * 10,
+            "roll_e4": int(round(roll * 87.266)), "pitch_e4": int(round(pitch * 87.266)), "yaw_e4": yaw}
 
 
 def encode_state(distance_raw_mm: int, flow_x: int, flow_y: int, flow_quality: int, ekf_valid: bool, flow_status: int,
@@ -286,6 +300,8 @@ def encode_state(distance_raw_mm: int, flow_x: int, flow_y: int, flow_quality: i
 
 def decode_state(p: bytes) -> Optional[dict]:
     """0xD6 -> one message holding both halves; split_state() turns it into the optrange + kinematic messages the rest of the program already understands."""
+    if len(p) == STATE2_PAYLOAD_BYTES + 2 and p[0] == 0x00 and p[1] == 0xC8:
+        return decode_state_v48(p[2:])
     if len(p) == STATE_PAYLOAD_BYTES + 2 and p[0] == 0x00 and p[1] == 0xC8:
         p = p[2:]
     if len(p) < STATE_PAYLOAD_BYTES:

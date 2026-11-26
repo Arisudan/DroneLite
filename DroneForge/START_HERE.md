@@ -76,6 +76,7 @@ Channels 9-16 are only carried with ELRS **100Hz Full + Switch Mode 16ch Rate/2*
 | v4.7.3R | flashed 2026-11-24 | rev1 values + VO aid |
 | **v4.7.4R** | **flashed on the drone (confirmed over USB 2026-11-25: build "Nov 25 2026 11:40:56", `debug_mode = DF_HOLD`)** | level-trim learning during the climb; debug mode `DF_HOLD` (debug[0..3] = EKF velocity fwd/right mm/s, VO aid fwd/right mm, -32768 = no fresh aid) |
 | **v4.7.4R1** | built 2026-11-26, **not flashed, not flown** | v4.7.4R with the v4.5 height gains (0.9923 / 0.10 / 0.04) and sideways kp 2.5 / ki 0.10; the learned trim is kept (the simulation shows it, not the gains, removes the drift) |
+| **v4.8** | built 2026-11-26, **not flashed, not flown** | R1 + sooner lift-off + VO aid usable in the climb + 20-byte state frame. **Update the GCS before flashing** (see its README) |
 Flash with `python3 tools_scripts/df.py flash <fw.bin> [--debug-hold]` (owner go-ahead first; FC on USB, battery off, disarmed). Each build folder has its README, sources, patch and checksums; Betaflight source work tree lives outside the repo (`~/droneforge/bf_v473R/repo`, toolchain `~/droneforge/toolchain_x86`). The simulator loads the same control code as shared libraries (`gazebo/controllers/libhh_*.so`, selector `DF_FW=v474r`).
 FC facts: serial port 2 = 262144 (MTF-02P) — Betaflight Configurator's Ports tab resets it; never enter the CLI within 60 s of power-up and note CLI `exit` reboots; the CLI pauses telemetry while open; FC USB must be unplugged to arm.
 
@@ -127,7 +128,7 @@ Always line up the CSV and the FC log of the same flight before concluding anyth
 
 ## 10. Where things stand (2026-11-26) — honest
 **Proven on the real drone:** link and 16-channel carriage (channel test ✔, error ≤ 1 µs), EKF/state telemetry, FC height hold with POS HOLD flights holding sideways speed at about 0.11-0.19 m/s rms (max about 0.3), SAFE/disarm path, hold logging, VO engine tracking on the bench (about 100 inliers, 30 Hz) after the rectify fix.
-**Not yet proven:** the VO aid has never reached the FC's hold in a real flight (the phase never reached HOLDING because flights were cut short by SAFE and by height bobbing); EXPLORE on the real drone; sign and scale of the aid in flight; whether ALT HOLD or POS HOLD is better (one flight each so far: ALT HOLD reached the 0.5 m hold, rms 0.11 m/s).
+**Not yet proven:** the VO aid has never reached the FC's hold in a real flight (HOLDING was reached once, 2026-11-26 09:55, but SAFE followed 0.3 s later, before a key frame; see HANDOFF 5z); EXPLORE on the real drone; sign and scale of the aid in flight; whether ALT HOLD or POS HOLD is better (one flight each so far: ALT HOLD reached the 0.5 m hold, rms 0.11 m/s).
 **Open problems, in order:** (1) slow, bobbing lift-off (6-8 s; a charged pack is advised, the pack read 13.9 V); (2) reach HOLDING and see the aid flow in a CSV; (3) idea queued: take off in ALT HOLD, switch to POS HOLD automatically at HOLDING; (4) possible ground key frame so the aid can start at take-off (the FC only applies it in HOLD, so using it during the climb needs a firmware change); (5) state-frame rate about 12 Hz at best (link limited; a smaller frame would need a new firmware).
 **GCS redesign:** eight mock-up sets exist as PNGs in the owner's Pictures folder (not in the repo); no redesign has been implemented.
 

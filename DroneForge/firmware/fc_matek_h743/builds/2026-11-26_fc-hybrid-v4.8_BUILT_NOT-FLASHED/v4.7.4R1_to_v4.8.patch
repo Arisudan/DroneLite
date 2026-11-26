@@ -1,0 +1,130 @@
+--- R1/height_hold_core.c
++++ v4.8/height_hold_core.c
+@@ -24,7 +24,7 @@
+     p->overshoot_m = 0.10f; p->overshoot_vz = 0.40f; p->overshoot_cut = 0.08f;
+     p->height_min = 0.2f; p->height_max = 2.5f;
+     p->base_tau = 1.5f; p->base_follow_max = 0.06f; p->lift_vz = 0.05f; p->lift_m = 0.15f;
+-    p->takeoff_start_frac = 0.82f; p->takeoff_creep_per_s = 0.010f; p->takeoff_fast_per_s = 0.03f; p->takeoff_cap_frac = 1.40f; p->takeoff_fail_s = 3.0f;
++    p->takeoff_start_frac = 0.92f; p->takeoff_creep_per_s = 0.010f; p->takeoff_fast_per_s = 0.03f; p->takeoff_cap_frac = 1.40f; p->takeoff_fail_s = 3.0f;
+     p->land_rate = 0.16f; p->land_slow_rate = 0.07f; p->land_slow_below = 0.15f;
+     p->touch_m = 0.07f; p->touch_s = 0.30f; p->idle_ramp_per_s = 1.5f; p->takeoff_ramp_per_s = 0.35f; p->cap_land_s = 1.5f; p->lift_base_boost = 0.0f; p->takeoff_vz_max = 0.30f; p->takeoff_vz_back = 0.05f; p->takeoff_handover_margin = 0.05f;
+     p->takeoff_closed = 0.0f;      /* v4.7.3R: 0 = the v4.6-rev1 open-loop take-off creep (v4.7 / v4.7.2: 1) */
+--- R1/xy_hold_core.c
++++ v4.8/xy_hold_core.c
+@@ -10,7 +10,7 @@
+     p->test_deg = 2.5f; p->test_s = 0.8f; p->test_min_dv = 0.08f; p->calm_speed = 0.50f; p->calm_s = 0.5f;
+     p->runaway_speed = 1.0f; p->runaway_s = 1.0f; p->runaway_pos = 2.5f;
+     p->skip_test = 1.0f;
+-    p->stick_db = 2.0f; p->brake_speed = 0.15f; p->brake_s = 0.2f; p->aid_max_m = 3.0f; p->climb_trim = 3.0f;      /* stick_db 2.0 = stick-through can never trigger (the stick is +-1.0), as v4.6-rev1. v4.7.4R: climb_trim 3 deg/m = the level trim is learned from the drift speed during the take-off climb (v4.7.3R: 0), so POS HOLD starts with the level error compensated. The VO aid (aid_max_m) is kept */
++    p->stick_db = 2.0f; p->brake_speed = 0.15f; p->brake_s = 0.2f; p->aid_max_m = 3.0f; p->climb_trim = 3.0f; p->climb_aid = 1.0f;      /* stick_db 2.0 = stick-through can never trigger (the stick is +-1.0), as v4.6-rev1. v4.7.4R: climb_trim 3 deg/m = the level trim is learned from the drift speed during the take-off climb (v4.7.3R: 0), so POS HOLD starts with the level error compensated. The VO aid (aid_max_m) is kept */
+ }
+ 
+ void xyStart(xyState_t *s) { memset(s, 0, sizeof(*s)); s->active = true; }
+@@ -46,7 +46,8 @@
+     /* v4.7: the PC's visual-odometry position (drift-free, anchored to a key frame) replaces the flow-integrated displacement while it is fresh; between aid
+      * samples and without it the displacement keeps integrating the flow speed as before */
+     s->aid_used = aid_valid && fabsf(aid_fwd) < p->aid_max_m && fabsf(aid_right) < p->aid_max_m;
+-    if (s->aid_used && hold) { s->p[0] = aid_fwd; s->p[1] = aid_right; }
++    const bool aid_acts = s->aid_used && (hold || p->climb_aid > 0.5f);      /* v4.8: also in the take-off climb; below min_z we returned already */
++    if (aid_acts) { s->p[0] = aid_fwd; s->p[1] = aid_right; }
+     /* the speed measurement is noisy (flow + EKF): the sign test works on a low-passed copy (tau 0.15 s) */
+     const float a_lp = dt / (0.15f + dt);
+     s->vf[0] += (forward - s->vf[0]) * a_lp; s->vf[1] += (right - s->vf[1]) * a_lp;
+@@ -111,7 +112,7 @@
+             out[ax] = -clampf_(p->kv * v[ax], -p->max_deg, p->max_deg);   /* v4.4: full authority (was +-1.5 deg): the real drone drifts ~0.2 m/s^2 after lift-off and +-1.5 deg could not stop it before the runaway guard tripped (2026-11-16, 3 flights); the guard stays the fail-safe */
+             continue;
+         }
+-        const float kp = hold ? p->kp : 0.0f, ki = p->ki;               /* v4.7.4R: the learned trim (integral) acts in the climb too; the displacement (kp) only in the hold */
++        const float kp = (hold || aid_acts) ? p->kp : 0.0f, ki = p->ki;               /* v4.7.4R: the learned trim (integral) acts in the climb too; the displacement (kp) only in the hold */
+         out[ax] = -sg * (p->kv * v[ax] + kp * s->p[ax] + ki * s->i[ax]);
+         out[ax] = clampf_(out[ax], -p->max_deg, p->max_deg);
+     }
+--- R1/xy_hold_core.h
++++ v4.8/xy_hold_core.h
+@@ -25,6 +25,7 @@
+     float aid_max_m;                /* 3.0 m: a position aid (the PC's visual odometry) larger than this is ignored */
+     float climb_trim;               /* 3.0 deg/m: during the take-off climb (no position hold yet) the level trim is learned from the drift speed: trim += climb_trim * speed * dt,
+                                        so the hold starts with the level error already compensated (v4.6-rev1: the first ~0.4 m of drift after the hand-over came from it) */                /* v4.5 rev2: > 0.5 = no sign self-test, the nominal sign is used from the start. The test leans the drone 2.5 deg on both axes for 0.8 s (a visible move forward and right at take-off) and the nominal sign has been confirmed on the real drone in many flights; the runaway guard still switches the loop off if it were wrong */
++    float climb_aid;                /* v4.8: 1 = the PC position aid (VO, key frame set ON THE GROUND) also acts during the take-off climb (position term kp * aid), not only in the hold */
+ } xyParams_t;
+ 
+ typedef struct {
+--- R1/crsf_state_pack.h
++++ v4.8/crsf_state_pack.h
+@@ -1,13 +1,17 @@
+ #pragma once
+-/* Compact CRSF state frame 0xD6 (NIMBUS_SEND_STATE): range + optical flow + EKF velocity + attitude in ONE frame, replacing the D3 + D4 + ATTITUDE frames.
+- * Pure C (no Betaflight headers) so the byte layout is tested on the PC against the Python decoder (nimbus_pc/crsf.py decode_state). */
++/* Compact CRSF state frame 0xD6 (NIMBUS_SEND_STATE): range + optical flow + EKF velocity + attitude in ONE frame.
++ * v4.8 layout: 14 data bytes (20 on the wire; v4.7: 20 data / 26 on the wire), so ELRS needs fewer telemetry packets per frame.
++ * Pure C (no Betaflight headers): the byte layout is tested on the PC against the Python decoder (nimbus_pc/crsf.py decode_state). */
+ #include <stdbool.h>
+ #include <stdint.h>
+ 
+-#define CRSF_STATE_DATA_BYTES 20      /* big-endian: dist i16 mm, flow x i16, flow y i16, quality u8, flags u8, vel x/y/z i16 mm/s, roll/pitch/yaw i16 rad*1e4 */
+-#define CRSF_STATE_PAYLOAD_BYTES 22   /* [dest 0x00][origin 0xC8] + the 20 data bytes (ELRS 4.x reads types >= 0x28 as addressed frames) */
++#define CRSF_STATE_DATA_BYTES 14
++#define CRSF_STATE_PAYLOAD_BYTES 16   /* [dest 0x00][origin 0xC8] + the 14 data bytes (ELRS 4.x reads types >= 0x28 as addressed frames) */
+ 
+-/* flags: bit0 = EKF velocity/attitude valid, bit1 = optical flow status ok, bit2 = FC height hold active, bit3 = FC height hold fault, bits 4-5 = hold mode (0 hold, 1 take-off, 2 land), bit6 = velocity x/y are BODY-frame (forward, right), bit7 = the FC sideways loop switched itself off (runaway guard; in holdBits as 0x80).
+- * holdBits carries bits 2-5 already in place (mask 0x3C). Returns the payload size written to out[]. */
++/* data bytes (big-endian): 0-1 distance u16 mm | 2 flags | 3 flow quality | 4-6 velocity x, y as two signed 12-bit numbers, mm/s (+-2.047 m/s) |
++ * 7 velocity z i8, 0.01 m/s | 8 roll i8, 0.5 deg | 9 pitch i8, 0.5 deg | 10-11 yaw i16 rad*1e4 | 12 flow x i8, raw/2 | 13 flow y i8, raw/2. Values outside a field saturate.
++ * flags: bit0 = EKF velocity/attitude valid, bit1 = optical flow status ok, bit2 = FC height hold active, bit3 = FC height hold fault, bits 4-5 = hold mode (0 hold, 1 take-off, 2 land),
++ * bit6 = velocity x/y are BODY-frame (forward, right), bit7 = the FC sideways loop switched itself off (runaway guard). holdBits carries bits 2-5 and 7 in place.
++ * The inputs keep the v4.7 units (mm/s, rad*1e4, raw flow). Returns the payload size written to out[]. */
+ uint8_t crsfStatePack(uint8_t *out, uint16_t distRawMm, int16_t flowX, int16_t flowY, uint8_t flowQuality, bool ekfValid, uint8_t flowStatus, uint8_t holdBits,
+                       int16_t velXmm, int16_t velYmm, int16_t velZmm, int16_t rollE4, int16_t pitchE4, int16_t yawE4);
+--- R1/crsf_state_pack.c
++++ v4.8/crsf_state_pack.c
+@@ -1,6 +1,12 @@
+ #include "crsf_state_pack.h"
+ 
+ static uint8_t *put16(uint8_t *p, uint16_t v) { *p++ = (uint8_t)(v >> 8); *p++ = (uint8_t)(v & 0xFF); return p; }
++/* v / div rounded to the nearest (halves away from zero), clamped to +-lim */
++static int32_t scaled(int32_t v, int32_t mul, int32_t div, int32_t lim) {
++  const int32_t n = v * mul;
++  const int32_t r = (n >= 0) ? (n + div / 2) / div : -((-n + div / 2) / div);
++  return r > lim ? lim : (r < -lim ? -lim : r);
++}
+ 
+ uint8_t crsfStatePack(uint8_t *out, uint16_t distRawMm, int16_t flowX, int16_t flowY, uint8_t flowQuality, bool ekfValid, uint8_t flowStatus, uint8_t holdBits,
+                       int16_t velXmm, int16_t velYmm, int16_t velZmm, int16_t rollE4, int16_t pitchE4, int16_t yawE4) {
+@@ -8,15 +14,18 @@
+   *p++ = 0x00;                                   /* dest: broadcast */
+   *p++ = 0xC8;                                   /* origin: flight controller */
+   p = put16(p, distRawMm);
+-  p = put16(p, (uint16_t)flowX);
+-  p = put16(p, (uint16_t)flowY);
++  *p++ = (uint8_t)((ekfValid ? 1U : 0U) | (flowStatus ? 2U : 0U) | (holdBits & 0xBCU) | 0x40U);          /* bit6: the velocity is in the drone's axes (forward, right) */
+   *p++ = flowQuality;
+-  *p++ = (uint8_t)((ekfValid ? 1U : 0U) | (flowStatus ? 2U : 0U) | (holdBits & 0xBCU) | 0x40U);          /* bit6: the velocity is in the drone's axes (forward, right), not the world frame */
+-  p = put16(p, (uint16_t)velXmm);
+-  p = put16(p, (uint16_t)velYmm);
+-  p = put16(p, (uint16_t)velZmm);
+-  p = put16(p, (uint16_t)rollE4);
+-  p = put16(p, (uint16_t)pitchE4);
++  const uint32_t vx = (uint32_t)scaled(velXmm, 1, 1, 2047) & 0xFFFU;
++  const uint32_t vy = (uint32_t)scaled(velYmm, 1, 1, 2047) & 0xFFFU;
++  *p++ = (uint8_t)(vx >> 4);
++  *p++ = (uint8_t)(((vx & 0xFU) << 4) | (vy >> 8));
++  *p++ = (uint8_t)(vy & 0xFFU);
++  *p++ = (uint8_t)(int8_t)scaled(velZmm, 1, 10, 127);
++  *p++ = (uint8_t)(int8_t)scaled(rollE4, 1000, 87266, 127);       /* 0.5 deg = 87.266 * 1e-4 rad */
++  *p++ = (uint8_t)(int8_t)scaled(pitchE4, 1000, 87266, 127);
+   p = put16(p, (uint16_t)yawE4);
++  *p++ = (uint8_t)(int8_t)scaled(flowX, 1, 2, 127);
++  *p++ = (uint8_t)(int8_t)scaled(flowY, 1, 2, 127);
+   return (uint8_t)(p - out);
+ }
+--- R1/crsf_protocol.h
++++ v4.8/crsf_protocol.h
+@@ -115,7 +115,7 @@
+     CRSF_FRAME_RANGEFINDER_TF_PAYLOAD_SIZE = 4,
+     CRSF_FRAME_OPTRANGE_PAYLOAD_SIZE = 12, // [dest 0x00][origin 0xC8] + 10 data bytes
+     CRSF_FRAME_RAW_IMU_PAYLOAD_SIZE = 12,
+-    CRSF_FRAME_STATE_PAYLOAD_SIZE = 22, // [dest][origin] + 20 data bytes (telemetry/crsf_state_pack.h)
++    CRSF_FRAME_STATE_PAYLOAD_SIZE = 16, // [dest][origin] + 14 data bytes, v4.8 compact layout (telemetry/crsf_state_pack.h)
+     CRSF_FRAME_KINEMATIC_STATE_PAYLOAD_SIZE = 20, // [dest][origin] + pos xyz, vel xyz, attitude rpy
+ #ifdef USE_DSHOT_TELEMETRY
+     CRSF_FRAME_MOTOR_RPM_PAYLOAD_SIZE = 13, // with telemetry: 1 pole + 4*(1 pwm + 2 erpm)

@@ -113,3 +113,13 @@ source /opt/ros/jazzy/setup.bash && cd gazebo && ./run_house.sh --gui          #
 
 ## 5y (2026-11-26) firmware v4.7.4R1 BUILT, NOT FLASHED
 v4.7.4R + the v4.5 numbers: height gains 0.9923 / 0.10 / 0.04, sideways kp 2.5 / ki 0.10; climb_trim 3 KEPT (sim: trim 0 brings the rev1 drift back, 372 mm vs 144 mm). Folder: firmware/fc_matek_h743/builds/2026-11-26_fc-hybrid-v4.7.4R1_BUILT_NOT-FLASHED (README, src, patch, libhh_v474R1.so; sim selector DF_FW=v474r1). The drone still runs v4.7.4R. Flash only on the owner's word.
+
+## 5z (2026-11-26) lift-off / HOLDING / ground key frame / state-frame rate
+- Hold CSV 20261126_095553 (flight 09:55): HOLDING WAS reached (first time), 15.2 s after the take-off command, SAFE 0.3 s later, so the VO key frame was never set. Lift-off +7.7 s, FC 'HH' at +11.2 s, no bobbing; pack 13.3 V (3.33 V/cell). (START_HERE section 10 corrected.)
+- GCS: HOVER window ARRIVED_M 0.06 -> 0.10 m (that flight settled 0.09 m low; replay: HOLDING ~2 s earlier). One flight of evidence, not flown with the change.
+- GCS: ground VO key frame, OPT-IN (DF_GROUND_AID=1, nimbus_core/aid_policy.py). Off by default: the aid sign is unproven in flight. On v4.7.4R the aid is ignored until HOLD, then pulls to the take-off spot.
+- New: tools_scripts/hold_report.py (did the flight reach HOLDING, did the aid reach the FC).
+- Tests: df.py test 502 run, 1 failure (test_gcs test_keys_and_say; passes alone, full baseline run not compared); 70 targeted pytest tests pass; fc_hold_sim test_v48 + test_v474r pass.
+- FC v4.8 BUILT, NOT FLASHED (builds/2026-11-26_fc-hybrid-v4.8_BUILT_NOT-FLASHED, base R1): take-off creep start 0.82 -> 0.92, aid usable in the climb, state frame 26 -> 20 bytes. UPDATE THE GCS BEFORE FLASHING. Read its README.
+- Bobbing: replay of the 11-25 flights shows throttle still rising during the falls: not commanded by the take-off law. Needs the FC blackbox (motors, gyro).
+- This laptop CAN build firmware: toolchain in ~/droneforge/bf_fixed/repo/tools; R1 reproduced from bf_fixed + R1 src.
