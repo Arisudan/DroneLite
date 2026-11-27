@@ -160,11 +160,17 @@ static void release(bool fault)
     DEBUG_SET(DEBUG_DF_HOLD, 0, 0); DEBUG_SET(DEBUG_DF_HOLD, 1, 0); DEBUG_SET(DEBUG_DF_HOLD, 2, -32768); DEBUG_SET(DEBUG_DF_HOLD, 3, -32768);   /* v4.7.4R: hold ended */
 }
 
+/* v4.8.4 range anchoring: the hold regulates the EKF height plus a slow correction toward the live range (the EKF sat ~3.7 cm above the real range): a complementary filter, tau 3 s, at most +-0.10 m */
+#define HH_ANCHOR_TAU_S 3.0f
+#define HH_ANCHOR_MAX_M 0.10f
+static float groundRng = 0.0f;
+static float anchorB = 0.0f;
+
 void heightHoldUpdate(timeUs_t currentTimeUs)
 {
     const bool armed = ARMING_FLAG(ARMED);
     if (!armed) { xyHoldAngle[0] = xyHoldAngle[1] = 0.0f; xyStarted = false; xyPaused = false; }
-    if (armed && !wasArmed) { groundN = 0; groundZ = 0.0f; hhFault = false; hhLastMode = -1; }
+    if (armed && !wasArmed) { groundN = 0; groundZ = 0.0f; groundRng = 0.0f; anchorB = 0.0f; hhFault = false; hhLastMode = -1; }
     wasArmed = armed;
 
     const kinematicState_t *st = kinematicEstimatorGetState();
@@ -182,6 +188,7 @@ void heightHoldUpdate(timeUs_t currentTimeUs)
     if (armed && !hhState.active && finite && rangeFresh && z < 0.5f && rcData[THROTTLE] < HH_GROUND_LEARN_US && fabsf(vz) < 0.15f) {
         if (groundN < 200) groundN++;
         groundZ += (z - groundZ) / (float)groundN;
+        { const int32_t rg = rangefinderGetLatestAltitude(); if (rg > 0) groundRng += ((float)rg * 0.01f - groundRng) / (float)groundN; }      /* v4.8.4: the range reading on the floor, for the range anchoring */
     }
 
     const float dt = lastRunUs ? (float)cmpTimeUs(currentTimeUs, lastRunUs) * 1e-6f : 0.02f;
@@ -232,15 +239,29 @@ void heightHoldUpdate(timeUs_t currentTimeUs)
     const float dtc = constrainf(dt, 0.005f, 0.1f);
     const float vbat = getBatteryVoltageLatest() * 0.01f;
     if (rcData[HH_RC_BASE_CHANNEL] >= HH_US_OFF && fabsf(vz) < 0.3f) hhFollowBase(&hhState, &hhParams, dtc, throttleFractionFromUs((float)rcData[HH_RC_BASE_CHANNEL]), vbat);
+    float zUse = zr;                                                          /* v4.8.4: height the hold regulates */
+    const bool level8 = abs(attitude.values.roll) < 80 && abs(attitude.values.pitch) < 80;
+    if (hhState.mode == HH_MODE_HOLD) {
+        const int32_t rngCm = rangefinderGetLatestAltitude();
+        if (rangeFresh && rngCm > 0 && level8 && zr > 0.15f && groundN >= 20) {
+            const float zRange = (float)rngCm * 0.01f - groundRng;
+            anchorB += ((zRange - zr) - anchorB) * constrainf(dtc / HH_ANCHOR_TAU_S, 0.0f, 1.0f);
+            anchorB = constrainf(anchorB, -HH_ANCHOR_MAX_M, HH_ANCHOR_MAX_M);
+        }
+        zUse = zr + anchorB;
+    } else {
+        anchorB = 0.0f;
+    }
+    hhState.learn_ok = level8 && rangeFresh;
     {   /* v4.8.3: is a motor at its output limit (the previous cycle's mixer output)? */
         const float lo = getMotorOutputLow(), hi = getMotorOutputHigh(); float mx = lo;
         for (uint8_t i = 0; i < getMotorCount(); i++) if (motor[i] > mx) mx = motor[i];
         hhState.motor_sat = (hi > lo) && ((mx - lo) / (hi - lo) >= 0.97f);
     }
-    const float f = hhUpdate(&hhState, &hhParams, dtc, zr, vz, vbat);
-    DEBUG_SET(DEBUG_DF_HOLD, 4, (int16_t)constrainf(lrintf(zr * 1000.0f), -32767.0f, 32767.0f));                       /* v4.8.3: the hold's own height (EKF, above the ground reference) mm */
+    const float f = hhUpdate(&hhState, &hhParams, dtc, zUse, vz, vbat);
+    DEBUG_SET(DEBUG_DF_HOLD, 4, (int16_t)constrainf(lrintf(zUse * 1000.0f), -32767.0f, 32767.0f));                     /* v4.8.4: the height the hold regulates (EKF + range anchor, above the ground reference) mm */
     DEBUG_SET(DEBUG_DF_HOLD, 5, (int16_t)constrainf(lrintf(vz * 1000.0f), -32767.0f, 32767.0f));                       /* its vertical speed mm/s */
-    DEBUG_SET(DEBUG_DF_HOLD, 6, (int16_t)constrainf(lrintf(hhState.z_ref * 1000.0f), -32767.0f, 32767.0f));            /* the reference it follows mm */
+    DEBUG_SET(DEBUG_DF_HOLD, 6, (int16_t)constrainf(lrintf(anchorB * 1000.0f), -32767.0f, 32767.0f));                  /* v4.8.4: the range anchor correction b mm (was z_ref; the GCS target is in the hold CSV) */
     DEBUG_SET(DEBUG_DF_HOLD, 7, (int16_t)constrainf(lrintf((hhState.integ_dbg * 1000.0f)) + (hhState.motor_sat ? 10000 : 0), -32767.0f, 32767.0f));   /* integral x1000 (+10000 while a motor is saturated) */
     if (hhState.fail) { release(true); return; }                              /* take-off never lifted: the PC takes over and disarms */
     if (hhState.landed && f <= hhParams.thr_idle + 0.001f) { release(false); hhLandLatch = true; return; }

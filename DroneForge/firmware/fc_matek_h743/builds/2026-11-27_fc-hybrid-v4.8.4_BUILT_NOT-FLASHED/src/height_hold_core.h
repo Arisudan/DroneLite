@@ -40,6 +40,7 @@ typedef struct {
                                             trajectory, starting at the drone's climb speed. 0 = v4.6: the open-loop creep climbs to 5 cm below the target (it overshot: real flights 0.6 -> 0.78 m,
                                             simulation of the drone 0.80 -> 1.08 m, past the 1.0 m ceiling) */
     float az_ff_gain;                    /* v4.7.3R: scale of the acceleration feed-forward in a height change (0 = off = v4.6-rev1, 1 = v4.7.1 / v4.7.2) */
+    float learn_tau;                     /* v4.8.4: s, time constant with which the hold moves its integral into the hover base while it hovers (0 = off) */
 } hhParams_t;
 
 enum { HH_MODE_HOLD = 0, HH_MODE_TAKEOFF = 1, HH_MODE_LAND = 2 };
@@ -74,6 +75,7 @@ typedef struct {
     float t_liftdet;                     /* time the rise has lasted (s) */
     float t_floor;                       /* time in the hold on the floor with the target above (s): sank back */
     bool  cap_landing;                   /* the current landing was started by the thrust-limit rule */
+    bool  learn_ok;                      /* v4.8.4: set by height_hold.c every cycle: level, range fresh, no motor saturated (hover-base learning allowed) */
     bool  motor_sat;                     /* v4.8.3: set by height_hold.c every cycle: one motor is at its output limit, a higher throttle demand cannot add thrust (0 in the PC build) */
     float integ_dbg;                     /* v4.8.3: copy of the integral for the debug log */
 } hhState_t;

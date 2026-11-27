@@ -138,3 +138,6 @@ v4.8.3 log with the hold internals: z tracks range (corr 0.98), no motor saturat
 
 ## 6d (2026-11-27 16:25) firmware v4.8.4 REBUILT with kv 0.32 (stamp 16:22:14), NOT FLASHED
 Measured vertical plant gain 11.6 m/s2 per throttle unit vs ~27 assumed => damping 0.55 for every gain set (kp and kv raised together). Sim with a weak plant + slow thrust disturbance reproduces the real sd (9 cm) and shows kv 0.32 halves it. The kv 0.15 build (the 11-27 flights) is in previous_kv0.15_built_2026-11-27_15-16-04/.
+
+## 6e (2026-11-27 16:50) firmware v4.8.4 REBUILT FULL (stamp 16:48:02), NOT FLASHED: kv 0.32 + hover-base learning (tau 8 s) + range anchoring (tau 3 s, +-0.10 m) + az_ff_gain 2.3 + target threshold 5 mm
+Measured plant gain 11.6 vs 27 assumed; EKF z sat +3.7 cm above the range; hand-over base ~0.18 too low. Sim (weak plant + slow disturbance): sd 9.0 -> 4.2 cm. Unflown; range anchoring is untested in sim. Previous builds in previous_kv0.32_only_* (kv only). Debug: debug[4]=z used, [6]=anchor b.

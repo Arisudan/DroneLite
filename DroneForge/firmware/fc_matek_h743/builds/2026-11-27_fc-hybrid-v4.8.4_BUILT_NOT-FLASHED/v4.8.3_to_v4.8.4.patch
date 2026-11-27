@@ -1,5 +1,67 @@
+--- /home/htic/Music/DroneForge/firmware/fc_matek_h743/builds/2026-11-26_fc-hybrid-v4.8.3_BUILT_NOT-FLASHED/src/height_hold.c	2026-11-26 16:48:59.002475985 +0530
++++ src/height_hold.c	2026-11-27 16:48:31.817512038 +0530
+@@ -160,11 +160,17 @@
+     DEBUG_SET(DEBUG_DF_HOLD, 0, 0); DEBUG_SET(DEBUG_DF_HOLD, 1, 0); DEBUG_SET(DEBUG_DF_HOLD, 2, -32768); DEBUG_SET(DEBUG_DF_HOLD, 3, -32768);   /* v4.7.4R: hold ended */
+ }
+ 
++/* v4.8.4 range anchoring: the hold regulates the EKF height plus a slow correction toward the live range (the EKF sat ~3.7 cm above the real range): a complementary filter, tau 3 s, at most +-0.10 m */
++#define HH_ANCHOR_TAU_S 3.0f
++#define HH_ANCHOR_MAX_M 0.10f
++static float groundRng = 0.0f;
++static float anchorB = 0.0f;
++
+ void heightHoldUpdate(timeUs_t currentTimeUs)
+ {
+     const bool armed = ARMING_FLAG(ARMED);
+     if (!armed) { xyHoldAngle[0] = xyHoldAngle[1] = 0.0f; xyStarted = false; xyPaused = false; }
+-    if (armed && !wasArmed) { groundN = 0; groundZ = 0.0f; hhFault = false; hhLastMode = -1; }
++    if (armed && !wasArmed) { groundN = 0; groundZ = 0.0f; groundRng = 0.0f; anchorB = 0.0f; hhFault = false; hhLastMode = -1; }
+     wasArmed = armed;
+ 
+     const kinematicState_t *st = kinematicEstimatorGetState();
+@@ -182,6 +188,7 @@
+     if (armed && !hhState.active && finite && rangeFresh && z < 0.5f && rcData[THROTTLE] < HH_GROUND_LEARN_US && fabsf(vz) < 0.15f) {
+         if (groundN < 200) groundN++;
+         groundZ += (z - groundZ) / (float)groundN;
++        { const int32_t rg = rangefinderGetLatestAltitude(); if (rg > 0) groundRng += ((float)rg * 0.01f - groundRng) / (float)groundN; }      /* v4.8.4: the range reading on the floor, for the range anchoring */
+     }
+ 
+     const float dt = lastRunUs ? (float)cmpTimeUs(currentTimeUs, lastRunUs) * 1e-6f : 0.02f;
+@@ -232,15 +239,29 @@
+     const float dtc = constrainf(dt, 0.005f, 0.1f);
+     const float vbat = getBatteryVoltageLatest() * 0.01f;
+     if (rcData[HH_RC_BASE_CHANNEL] >= HH_US_OFF && fabsf(vz) < 0.3f) hhFollowBase(&hhState, &hhParams, dtc, throttleFractionFromUs((float)rcData[HH_RC_BASE_CHANNEL]), vbat);
++    float zUse = zr;                                                          /* v4.8.4: height the hold regulates */
++    const bool level8 = abs(attitude.values.roll) < 80 && abs(attitude.values.pitch) < 80;
++    if (hhState.mode == HH_MODE_HOLD) {
++        const int32_t rngCm = rangefinderGetLatestAltitude();
++        if (rangeFresh && rngCm > 0 && level8 && zr > 0.15f && groundN >= 20) {
++            const float zRange = (float)rngCm * 0.01f - groundRng;
++            anchorB += ((zRange - zr) - anchorB) * constrainf(dtc / HH_ANCHOR_TAU_S, 0.0f, 1.0f);
++            anchorB = constrainf(anchorB, -HH_ANCHOR_MAX_M, HH_ANCHOR_MAX_M);
++        }
++        zUse = zr + anchorB;
++    } else {
++        anchorB = 0.0f;
++    }
++    hhState.learn_ok = level8 && rangeFresh;
+     {   /* v4.8.3: is a motor at its output limit (the previous cycle's mixer output)? */
+         const float lo = getMotorOutputLow(), hi = getMotorOutputHigh(); float mx = lo;
+         for (uint8_t i = 0; i < getMotorCount(); i++) if (motor[i] > mx) mx = motor[i];
+         hhState.motor_sat = (hi > lo) && ((mx - lo) / (hi - lo) >= 0.97f);
+     }
+-    const float f = hhUpdate(&hhState, &hhParams, dtc, zr, vz, vbat);
+-    DEBUG_SET(DEBUG_DF_HOLD, 4, (int16_t)constrainf(lrintf(zr * 1000.0f), -32767.0f, 32767.0f));                       /* v4.8.3: the hold's own height (EKF, above the ground reference) mm */
++    const float f = hhUpdate(&hhState, &hhParams, dtc, zUse, vz, vbat);
++    DEBUG_SET(DEBUG_DF_HOLD, 4, (int16_t)constrainf(lrintf(zUse * 1000.0f), -32767.0f, 32767.0f));                     /* v4.8.4: the height the hold regulates (EKF + range anchor, above the ground reference) mm */
+     DEBUG_SET(DEBUG_DF_HOLD, 5, (int16_t)constrainf(lrintf(vz * 1000.0f), -32767.0f, 32767.0f));                       /* its vertical speed mm/s */
+-    DEBUG_SET(DEBUG_DF_HOLD, 6, (int16_t)constrainf(lrintf(hhState.z_ref * 1000.0f), -32767.0f, 32767.0f));            /* the reference it follows mm */
++    DEBUG_SET(DEBUG_DF_HOLD, 6, (int16_t)constrainf(lrintf(anchorB * 1000.0f), -32767.0f, 32767.0f));                  /* v4.8.4: the range anchor correction b mm (was z_ref; the GCS target is in the hold CSV) */
+     DEBUG_SET(DEBUG_DF_HOLD, 7, (int16_t)constrainf(lrintf((hhState.integ_dbg * 1000.0f)) + (hhState.motor_sat ? 10000 : 0), -32767.0f, 32767.0f));   /* integral x1000 (+10000 while a motor is saturated) */
+     if (hhState.fail) { release(true); return; }                              /* take-off never lifted: the PC takes over and disarms */
+     if (hhState.landed && f <= hhParams.thr_idle + 0.001f) { release(false); hhLandLatch = true; return; }
 --- /home/htic/Music/DroneForge/firmware/fc_matek_h743/builds/2026-11-26_fc-hybrid-v4.8.3_BUILT_NOT-FLASHED/src/height_hold_core.c	2026-11-26 16:48:59.004911459 +0530
-+++ src/height_hold_core.c	2026-11-27 16:22:28.452256113 +0530
++++ src/height_hold_core.c	2026-11-27 16:48:31.819149249 +0530
 @@ -18,7 +18,7 @@
  
  void hhDefaults(hhParams_t *p)
@@ -9,3 +71,56 @@
      p->vz_lim = 0.4581f; p->climb_peak_frac = 0.45f; p->descent_peak_frac = 0.45f;      /* v4.7.3R: 0.45 as v4.6-rev1 (v4.7.1 / v4.7.2: 0.35) */
      p->thr_idle = 0.05f; p->thr_max = 0.85f; p->drop_max = 0.30f;
      p->overshoot_m = 0.10f; p->overshoot_vz = 0.40f; p->overshoot_cut = 0.08f;
+@@ -28,7 +28,8 @@
+     p->land_rate = 0.16f; p->land_slow_rate = 0.07f; p->land_slow_below = 0.15f;
+     p->touch_m = 0.07f; p->touch_s = 0.30f; p->idle_ramp_per_s = 1.5f; p->takeoff_ramp_per_s = 0.35f; p->cap_land_s = 1.5f; p->lift_base_boost = 0.0f; p->takeoff_vz_max = 0.30f; p->takeoff_vz_back = 0.05f; p->takeoff_handover_margin = 0.05f;
+     p->takeoff_closed = 0.0f;      /* v4.7.3R: 0 = the v4.6-rev1 open-loop take-off creep (v4.7 / v4.7.2: 1) */
+-    p->az_ff_gain = 0.0f;          /* v4.7.3R: 0 = no acceleration feed-forward (the v4.7.1 / v4.7.2 value is 1) */
++    p->az_ff_gain = 2.3f;          /* v4.8.4: 2.3 = 27 / 11.6 (the feed-forward assumes ~27 m/s2 per throttle unit, the measured real plant gain is 11.6); v4.7.3R: 0, v4.7.1 / v4.7.2: 1 */
++    p->learn_tau = 8.0f;           /* v4.8.4: hover-base learning time constant (s) */
+ }
+ 
+ void hhEngage(hhState_t *s, const hhParams_t *p, float z, float f0, float vbat)
+@@ -60,7 +61,7 @@
+     h = clampf_(h, p->height_min, p->height_max);
+     if (s->mode == HH_MODE_TAKEOFF) { s->target_pending = h; return; }
+     if (s->mode == HH_MODE_LAND) return;
+-    if (absf_(h - s->target) < 0.02f) return;                  /* ignore RC quantisation jitter */
++    if (absf_(h - s->target) < 0.005f) return;                 /* ignore RC quantisation jitter (the 10-bit channel steps by 2 mm); v4.8.4: was 0.02 m, which swallowed every GCS step under 2 cm */
+     s->target = h;
+     const float dz = absf_(h - s->z_ref);
+     const float peak = (h > s->z_ref ? p->climb_peak_frac : p->descent_peak_frac) * p->vz_lim;
+@@ -211,6 +212,15 @@
+         if (f >= p->thr_max - 0.005f && vz < 0.10f) s->t_satur += dt; else { s->t_satur -= dt; if (s->t_satur < 0.0f) s->t_satur = 0.0f; }
+         if (s->t_satur >= p->cap_land_s) { s->cap_landing = true; hhLand(s, p); }
+     }
++    /* v4.8.4 hover-base learning (as PX4's hover thrust estimator / ArduPilot's MOT_HOVER_LEARN): while the drone hovers on its target, the integral moves into the base, slowly and with the output unchanged
++     * (the base grows by what the integral loses). The real hover needs ~+0.18 more throttle than the lift-off throttle the base starts from: the integral used to supply it (20 s, nearly its limit). */
++    if (s->mode == HH_MODE_HOLD && !s->trans && s->learn_ok && !s->motor_sat && p->learn_tau > 0.0f && absf_(e) < 0.06f && absf_(vz) < 0.10f) {
++        const float sc = scale > 0.5f ? scale : 0.5f;
++        const float a = clampf_(dt / p->learn_tau, 0.0f, 1.0f);
++        const float fb = clampf_(s->f_base + s->integ * a / sc, 0.40f, p->thr_max - 0.05f);
++        const float moved = (fb - s->f_base) * sc;
++        s->f_base = fb; s->integ -= moved;
++    }
+     s->f_out = f;
+     return f;
+ }
+--- /home/htic/Music/DroneForge/firmware/fc_matek_h743/builds/2026-11-26_fc-hybrid-v4.8.3_BUILT_NOT-FLASHED/src/height_hold_core.h	2026-11-26 16:48:59.007346242 +0530
++++ src/height_hold_core.h	2026-11-27 16:48:31.820484791 +0530
+@@ -40,6 +40,7 @@
+                                             trajectory, starting at the drone's climb speed. 0 = v4.6: the open-loop creep climbs to 5 cm below the target (it overshot: real flights 0.6 -> 0.78 m,
+                                             simulation of the drone 0.80 -> 1.08 m, past the 1.0 m ceiling) */
+     float az_ff_gain;                    /* v4.7.3R: scale of the acceleration feed-forward in a height change (0 = off = v4.6-rev1, 1 = v4.7.1 / v4.7.2) */
++    float learn_tau;                     /* v4.8.4: s, time constant with which the hold moves its integral into the hover base while it hovers (0 = off) */
+ } hhParams_t;
+ 
+ enum { HH_MODE_HOLD = 0, HH_MODE_TAKEOFF = 1, HH_MODE_LAND = 2 };
+@@ -74,6 +75,7 @@
+     float t_liftdet;                     /* time the rise has lasted (s) */
+     float t_floor;                       /* time in the hold on the floor with the target above (s): sank back */
+     bool  cap_landing;                   /* the current landing was started by the thrust-limit rule */
++    bool  learn_ok;                      /* v4.8.4: set by height_hold.c every cycle: level, range fresh, no motor saturated (hover-base learning allowed) */
+     bool  motor_sat;                     /* v4.8.3: set by height_hold.c every cycle: one motor is at its output limit, a higher throttle demand cannot add thrust (0 in the PC build) */
+     float integ_dbg;                     /* v4.8.3: copy of the integral for the debug log */
+ } hhState_t;

@@ -28,7 +28,8 @@ void hhDefaults(hhParams_t *p)
     p->land_rate = 0.16f; p->land_slow_rate = 0.07f; p->land_slow_below = 0.15f;
     p->touch_m = 0.07f; p->touch_s = 0.30f; p->idle_ramp_per_s = 1.5f; p->takeoff_ramp_per_s = 0.35f; p->cap_land_s = 1.5f; p->lift_base_boost = 0.0f; p->takeoff_vz_max = 0.30f; p->takeoff_vz_back = 0.05f; p->takeoff_handover_margin = 0.05f;
     p->takeoff_closed = 0.0f;      /* v4.7.3R: 0 = the v4.6-rev1 open-loop take-off creep (v4.7 / v4.7.2: 1) */
-    p->az_ff_gain = 0.0f;          /* v4.7.3R: 0 = no acceleration feed-forward (the v4.7.1 / v4.7.2 value is 1) */
+    p->az_ff_gain = 2.3f;          /* v4.8.4: 2.3 = 27 / 11.6 (the feed-forward assumes ~27 m/s2 per throttle unit, the measured real plant gain is 11.6); v4.7.3R: 0, v4.7.1 / v4.7.2: 1 */
+    p->learn_tau = 8.0f;           /* v4.8.4: hover-base learning time constant (s) */
 }
 
 void hhEngage(hhState_t *s, const hhParams_t *p, float z, float f0, float vbat)
@@ -60,7 +61,7 @@ void hhSetTarget(hhState_t *s, const hhParams_t *p, float h)
     h = clampf_(h, p->height_min, p->height_max);
     if (s->mode == HH_MODE_TAKEOFF) { s->target_pending = h; return; }
     if (s->mode == HH_MODE_LAND) return;
-    if (absf_(h - s->target) < 0.02f) return;                  /* ignore RC quantisation jitter */
+    if (absf_(h - s->target) < 0.005f) return;                 /* ignore RC quantisation jitter (the 10-bit channel steps by 2 mm); v4.8.4: was 0.02 m, which swallowed every GCS step under 2 cm */
     s->target = h;
     const float dz = absf_(h - s->z_ref);
     const float peak = (h > s->z_ref ? p->climb_peak_frac : p->descent_peak_frac) * p->vz_lim;
@@ -210,6 +211,15 @@ float hhUpdate(hhState_t *s, const hhParams_t *p, float dt, float z, float vz, f
     if (s->mode == HH_MODE_HOLD && p->cap_land_s > 0.0f) {
         if (f >= p->thr_max - 0.005f && vz < 0.10f) s->t_satur += dt; else { s->t_satur -= dt; if (s->t_satur < 0.0f) s->t_satur = 0.0f; }
         if (s->t_satur >= p->cap_land_s) { s->cap_landing = true; hhLand(s, p); }
+    }
+    /* v4.8.4 hover-base learning (as PX4's hover thrust estimator / ArduPilot's MOT_HOVER_LEARN): while the drone hovers on its target, the integral moves into the base, slowly and with the output unchanged
+     * (the base grows by what the integral loses). The real hover needs ~+0.18 more throttle than the lift-off throttle the base starts from: the integral used to supply it (20 s, nearly its limit). */
+    if (s->mode == HH_MODE_HOLD && !s->trans && s->learn_ok && !s->motor_sat && p->learn_tau > 0.0f && absf_(e) < 0.06f && absf_(vz) < 0.10f) {
+        const float sc = scale > 0.5f ? scale : 0.5f;
+        const float a = clampf_(dt / p->learn_tau, 0.0f, 1.0f);
+        const float fb = clampf_(s->f_base + s->integ * a / sc, 0.40f, p->thr_max - 0.05f);
+        const float moved = (fb - s->f_base) * sc;
+        s->f_base = fb; s->integ -= moved;
     }
     s->f_out = f;
     return f;

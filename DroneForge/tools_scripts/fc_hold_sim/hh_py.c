@@ -13,9 +13,13 @@ void hh_takeoff(float f_hover, float target, float vbat) { hhTakeoffBegin(&S, &P
 void hh_set_target(float h) { hhSetTarget(&S, &P, h); }
 void hh_land(void) { hhLand(&S, &P); }
 void hh_follow(float dt, float fh, float vbat) { hhFollowBase(&S, &P, dt, fh, vbat); }
-float hh_update(float dt, float z, float vz, float vbat) { return hhUpdate(&S, &P, dt, z, vz, vbat); }
+float hh_update(float dt, float z, float vz, float vbat) { S.learn_ok = true; return hhUpdate(&S, &P, dt, z, vz, vbat); }      /* v4.8.4: the FC wrapper sets learn_ok from tilt and range freshness; the PC bridge: always allowed */
 void hh_set_motor_sat(int v) { S.motor_sat = v ? true : false; }
 float hh_f_out(void) { return S.f_out; }
+void hh_set_fbase(float v) { S.f_base = v; }
+float hh_target(void) { return S.target; }
+float hh_fbase(void) { return S.f_base; }
+int hh_trans(void) { return S.trans ? 1 : 0; }
 int hh_mode(void) { return S.mode; }
 int hh_active(void) { return S.active; }
 int hh_fail(void) { return S.fail; }
