@@ -1,11 +1,11 @@
 --- /home/htic/Music/DroneForge/firmware/fc_matek_h743/builds/2026-11-26_fc-hybrid-v4.8.3_BUILT_NOT-FLASHED/src/height_hold_core.c	2026-11-26 16:48:59.004911459 +0530
-+++ src/height_hold_core.c	2026-11-27 15:16:25.518831243 +0530
++++ src/height_hold_core.c	2026-11-27 16:22:28.452256113 +0530
 @@ -18,7 +18,7 @@
  
  void hhDefaults(hhParams_t *p)
  {
 -    p->kp_z = 1.40f; p->kv_z = 0.15f; p->ki_z = 0.06f; p->i_max = 0.20f;      /* v4.8.2: the stiff v4.6 / v4.7.4R height gains again (v4.7.4R1 / v4.8 / v4.8.1: 0.9923 / 0.10 / 0.04 = v4.5). 2026-11-26 flights: height sd 0.035-0.054 m with these, 0.09-0.16 m with the v4.5 ones (10 s period bobbing) */      /* v4.6 tighter height hold (was kp 0.9923, kv 0.10, ki 0.04): stiffer tracking and firmer vertical damping */
-+    p->kp_z = 1.40f; p->kv_z = 0.15f; p->ki_z = 0.10f; p->i_max = 0.35f;      /* v4.8.4: ki 0.06 -> 0.10 and i_max 0.20 -> 0.35 (the 2026-11-27 log with the hold internals: the integral had to reach +0.19, the old limit was 0.20, and it took ~20 s to get there). v4.8.2: the stiff v4.6 / v4.7.4R height gains again (v4.7.4R1 / v4.8 / v4.8.1: 0.9923 / 0.10 / 0.04 = v4.5). 2026-11-26 flights: height sd 0.035-0.054 m with these, 0.09-0.16 m with the v4.5 ones (10 s period bobbing) */      /* v4.6 tighter height hold (was kp 0.9923, kv 0.10, ki 0.04): stiffer tracking and firmer vertical damping */
++    p->kp_z = 1.40f; p->kv_z = 0.32f; p->ki_z = 0.10f; p->i_max = 0.35f;      /* v4.8.4 (rebuilt 2026-11-27): kv 0.15 -> 0.32 (measured plant gain 11.6 m/s2 per throttle unit vs ~27 assumed: the damping was ~0.55 for every gain set tried). v4.8.4: ki 0.06 -> 0.10 and i_max 0.20 -> 0.35 (the 2026-11-27 log with the hold internals: the integral had to reach +0.19, the old limit was 0.20, and it took ~20 s to get there). v4.8.2: the stiff v4.6 / v4.7.4R height gains again (v4.7.4R1 / v4.8 / v4.8.1: 0.9923 / 0.10 / 0.04 = v4.5). 2026-11-26 flights: height sd 0.035-0.054 m with these, 0.09-0.16 m with the v4.5 ones (10 s period bobbing) */      /* v4.6 tighter height hold (was kp 0.9923, kv 0.10, ki 0.04): stiffer tracking and firmer vertical damping */
      p->vz_lim = 0.4581f; p->climb_peak_frac = 0.45f; p->descent_peak_frac = 0.45f;      /* v4.7.3R: 0.45 as v4.6-rev1 (v4.7.1 / v4.7.2: 0.35) */
      p->thr_idle = 0.05f; p->thr_max = 0.85f; p->drop_max = 0.30f;
      p->overshoot_m = 0.10f; p->overshoot_vz = 0.40f; p->overshoot_cut = 0.08f;

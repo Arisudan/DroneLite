@@ -1,13 +1,15 @@
-v4.8.4 = v4.8.3 + a bigger and faster integral in the height hold (ki 0.06 -> 0.10, i_max 0.20 -> 0.35). BUILT 2026-11-27 15:16:04, NOT FLASHED, NOT FLOWN.
-The FC will report "built Nov 27 2026 15:16:04" after a flash. Flash only with the owner's go-ahead (FC on USB, battery off, disarmed):
+v4.8.4 (REBUILT with kv 0.32) = v4.8.3 + height-hold ki 0.10, i_max 0.35, kv 0.32. BUILT 2026-11-27 16:22:14, NOT FLASHED, NOT FLOWN.
+The FC will report "built Nov 27 2026 16:22:14" after a flash (the earlier v4.8.4 with kv 0.15, stamp 15:16:04, is kept in previous_kv0.15_built_2026-11-27_15-16-04/ and is what the 3 flights of 2026-11-27 ran).
+Flash only with the owner's go-ahead (FC on USB, battery off, disarmed):
    cd <DroneForge> && python3 tools_scripts/df.py flash firmware/fc_matek_h743/builds/2026-11-27_fc-hybrid-v4.8.4_BUILT_NOT-FLASHED/fc-hybrid-v4.8.4_matek-h743_betaflight-4.5.4.bin --debug-hold
-Back: the same command with builds/2026-11-26_fc-hybrid-v4.8.3_BUILT_NOT-FLASHED/*.bin (or v4.8.2 / v4.8.1).
-EVIDENCE (v4.8.3 flight 2026-11-27, hold internals in debug[4..7], docs/fc_logs/20261127/LOG00001_053000.BFL):
- * the hold's own height z tracks the real range (corr +0.98, offset +0.037 m): the measurement is fine. Motor saturation 0.0 %: the v4.8.3 saturation rule did nothing (v4.8.2 theory rejected).
- * the hold takes over at 0.44 m (15 s), the throttle falls ~3 % short of what holds the drone, it SINKS to 0.03 m (18 s), the integral winds up slowly (0 -> 0.09 in 4 s, 0.16 by 23 s, 0.19 by 29 s = 95 % of the 0.20 limit),
-   the drone climbs, overshoots, sinks again to 0.22 m (27 s) and only settles at 31 s (0.55-0.58 m, 5-8 cm above the 0.50 target, integral 0.17-0.19).
- * so the hover needs ~+0.18 more throttle than the base the hold starts from (the lift-off throttle in ground effect), the integral supplies it too slowly and is almost at its clamp.
-CHANGE (height_hold_core.c, hhDefaults): ki_z 0.06 -> 0.10, i_max 0.20 -> 0.35. With the integral below 0.2 the steady state is unchanged; only the speed of the wind-up and the headroom change.
-TESTS: the PC simulator (ideal ground effect) holds +-0.5 cm with and without this change (it does NOT reproduce the real sink, so it cannot rank fixes); test_v483.py passes.
-NOT VERIFIED: it has not flown. A faster integral can overshoot more. If the first flight overshoots above 0.7 m or oscillates faster, flash v4.8.3 or v4.8.2 back.
- A larger lift_base_boost (starting the hold nearer the real hover throttle) was tried in the simulator and overshot to ~1 m, so it is NOT included.
+Back: the same command with previous_kv0.15_built_2026-11-27_15-16-04/fc-hybrid-v4.8.4_matek-h743_betaflight-4.5.4.bin (kv 0.15) or builds/2026-11-26_fc-hybrid-v4.8.3_BUILT_NOT-FLASHED/*.bin.
+CAUSE (measured): the drone accelerates by only 11.6 m/s2 per unit of throttle (cross-spectrum of vertical acceleration vs mean motor output, flight 2026-11-27 LOG00001_053000_2, coherence 0.84, 0.08-0.5 Hz);
+ the hold was tuned for ~27 (and the simulator has ~27-29). Damping of the cascade is zeta = 0.5*sqrt(G*kv/kp): 0.54 for v4.8.1 gains (kp 0.99, kv 0.10) and 0.56 for v4.8.2-4.8.4 gains (kp 1.40, kv 0.15):
+ raising kp and kv together never changed it, so every gain set bobbed alike (height sd 0.08-0.10 m). Ruled out with data: motor saturation (0.0 %), baro (corr +0.81 with range), battery-voltage jitter (0.8-1.5 %, no correlation),
+ measurement (hold z follows the range, corr +0.98), vz lag (<= 0.2 s, gain 0.74-0.88), integral limit (peak 0.10-0.14 of 0.35).
+CHANGE (height_hold_core.c, hhDefaults): kv_z 0.15 -> 0.32 (kp 1.40 and ki 0.10 unchanged). Expected zeta about 0.86 at G = 13.
+SIMULATION (tools_scripts/fc_hold_sim, libhh_v483.so; plant weakened to 0.43x with a slow random thrust disturbance of ~6 % throttle, which reproduces the real sd: 9.3 cm with kv 0.15, 11.6 cm with the v4.8.1 gains):
+   kv 0.15 -> sd 9.3 cm | kv 0.26 -> 4.9 | kv 0.32 -> 4.2 | kv 0.40 -> 3.7 | kv 0.50 -> 3.5.   If the real plant gain is higher (0.8x design) a stiffer kv gets worse: 6.8 (0.32), 8.2 (0.40), 9.2 (0.50). 0.32 is the compromise.
+   On the undisturbed design plant (1.0x) kv 0.32 is too stiff (sd 0.5 -> 2.7 cm, 7x throttle activity): not a concern if the measured gain is right.
+NOT VERIFIED: it has not flown. The simulator's disturbance is a model, not a measurement: the source of the ~6 % slow thrust disturbance on the real drone is unknown. Expect about half the bobbing (sd 0.04-0.05 m), not +-2 cm.
+ If the first flight rings faster (period 2-3 s, audible throttle chatter) the real gain is higher than estimated: flash kv 0.15 back. The hold internals (debug[4..7]) stay in the log for the next analysis.

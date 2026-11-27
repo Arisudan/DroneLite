@@ -135,3 +135,6 @@ v4.8.1 and v4.8.2 (different height gains) both bob +-0.2 m / 7-11 s: not the ga
 
 ## 6c (2026-11-27 15:20) firmware v4.8.4 BUILT, NOT FLASHED: ki 0.10, i_max 0.35
 v4.8.3 log with the hold internals: z tracks range (corr 0.98), no motor saturation; after the hand-over the hold sinks to 0.03 m, the integral needs ~20 s to reach +0.19 (limit 0.20): slow integral near its clamp = the height bobbing. v4.8.4 raises ki and i_max. Unflown. Flash only on the owner's word; back = v4.8.3.
+
+## 6d (2026-11-27 16:25) firmware v4.8.4 REBUILT with kv 0.32 (stamp 16:22:14), NOT FLASHED
+Measured vertical plant gain 11.6 m/s2 per throttle unit vs ~27 assumed => damping 0.55 for every gain set (kp and kv raised together). Sim with a weak plant + slow thrust disturbance reproduces the real sd (9 cm) and shows kv 0.32 halves it. The kv 0.15 build (the 11-27 flights) is in previous_kv0.15_built_2026-11-27_15-16-04/.
