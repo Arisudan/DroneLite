@@ -132,3 +132,6 @@ Reason: POS HOLD + VO flight on v4.8.1 held 55 s with the VO aid active (FC: 73 
 
 ## 6b (2026-11-26 16:50) firmware v4.8.3 BUILT, NOT FLASHED: motor-saturation-aware height hold + hold internals in DF_HOLD debug[4..7]
 v4.8.1 and v4.8.2 (different height gains) both bob +-0.2 m / 7-11 s: not the gains. The sim holds +-0.5 cm. Real hold: M2 at >=97 % for 11 % of the time, height falls -3.5 cm/s then; M2 92 % vs M3 69 % (CoG toward M2). v4.8.3 freezes the integral / throttle growth while a motor is saturated and logs z/vz/z_ref/integral. Flash only on the owner's word; back = v4.8.2.
+
+## 6c (2026-11-27 15:20) firmware v4.8.4 BUILT, NOT FLASHED: ki 0.10, i_max 0.35
+v4.8.3 log with the hold internals: z tracks range (corr 0.98), no motor saturation; after the hand-over the hold sinks to 0.03 m, the integral needs ~20 s to reach +0.19 (limit 0.20): slow integral near its clamp = the height bobbing. v4.8.4 raises ki and i_max. Unflown. Flash only on the owner's word; back = v4.8.3.
